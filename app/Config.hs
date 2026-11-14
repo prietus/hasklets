@@ -100,7 +100,7 @@ defaultConfig =
         , cfgMargin = 24
         , cfgGap = 14
         , cfgColumns = [[WeatherW, SystemW, MprisW], [DisksW, ProcessesW]]
-        , cfgPlace = Place{placeName = "Tomares", placeLat = 37.38, placeLon = -6.05}
+        , cfgPlace = Place{placeName = "Madrid", placeLat = 40.42, placeLon = -3.70}
         , cfgProcessRows = 5
         }
 

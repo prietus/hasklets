@@ -1,0 +1,42 @@
+# Maintainer: Carlos Prieto Ortiz <prietus@live.com>
+
+pkgname=hasklets
+pkgver=0.1.0.0
+pkgrel=1
+pkgdesc='Desktop widgets for Wayland (weather, system, media, disks, processes, calendar) in Haskell'
+url='https://github.com/prietus/hasklets'
+arch=('x86_64' 'aarch64')
+license=('BSD-3-Clause')
+depends=('gtk4' 'gtk4-layer-shell' 'cairo' 'pango' 'gdk-pixbuf2' 'glib2'
+         'gobject-introspection-runtime' 'gmp' 'libffi')
+optdepends=('curl: weather, calendars and cover art served over HTTP')
+# hasklets is a plain program, nothing is compiled against it at run time,
+# and Arch has no packages of the GTK 4 bindings it uses (gi-gtk4,
+# gi-gtk4-layer-shell). So the Haskell libraries come from Hackage and are
+# linked statically (ghc-static); only the C libraries are shared.
+makedepends=('ghc' 'ghc-static' 'cabal-install' 'gobject-introspection')
+# After tagging v$pkgver: updpkgsums.
+source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+prepare() {
+  cd $pkgname-$pkgver
+  export CABAL_DIR="$srcdir/cabal"
+  cabal update
+  # Download here, so that build() works without the network.
+  cabal build --only-download
+}
+
+build() {
+  cd $pkgname-$pkgver
+  export CABAL_DIR="$srcdir/cabal"
+  cabal build --offline --ghc-option=-optl-Wl\,-z\,relro\,-z\,now
+}
+
+package() {
+  cd $pkgname-$pkgver
+  export CABAL_DIR="$srcdir/cabal"
+  install -Dm755 "$(cabal list-bin --offline exe:hasklets)" "$pkgdir/usr/bin/hasklets"
+  install -Dm644 README.md -t "$pkgdir/usr/share/doc/$pkgname"
+  install -Dm644 LICENSE -t "$pkgdir/usr/share/licenses/$pkgname"
+}

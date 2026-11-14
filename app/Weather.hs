@@ -86,7 +86,7 @@ fetch place = do
             (placeLon place)
 
 {- | Looks a place up by name in the Open-Meteo geocoding service and returns
-its description ("Tomares, Andalusia, Spain") and its coordinates.
+its description ("Madrid, Community of Madrid, Spain") and its coordinates.
 -}
 geocode :: String -> IO (Either String (String, Double, Double))
 geocode name = do

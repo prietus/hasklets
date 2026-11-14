@@ -59,7 +59,7 @@ configuration is kept.
   "margin": 24,
   "gap": 14,
   "columns": [["weather","system","mpris"],["disks","processes"]],
-  "weather": {"latitude":37.38,"longitude":-6.05,"name":"Tomares"},
+  "weather": {"latitude":40.42,"longitude":-3.70,"name":"Madrid"},
   "processes": {"rows":5}
 }
 ```
@@ -72,8 +72,8 @@ configuration is kept.
 | `margin` | `24` | distance from the screen edges, in logical pixels |
 | `gap` | `14` | space between widgets |
 | `columns` | see above | columns from left to right, each a list of `weather`, `system`, `mpris`, `disks`, `processes`, `calendar`; a widget that is not listed is hidden |
-| `weather.name` | `"Tomares"` | title of the weather widget |
-| `weather.latitude`, `weather.longitude` | `37.38`, `-6.05` | forecast location; sent to api.open-meteo.com |
+| `weather.name` | `"Madrid"` | title of the weather widget |
+| `weather.latitude`, `weather.longitude` | `40.42`, `-3.70` | forecast location; sent to api.open-meteo.com |
 | `processes.rows` | `5` | processes shown, 1 to 10 |
 
 Missing fields take their default.
