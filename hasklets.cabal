@@ -24,6 +24,7 @@ executable hasklets
                       Mpris
                       Processes
                       Settings
+                      Theme
                       Weather
     hs-source-dirs:   app
     default-language: GHC2021

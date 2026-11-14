@@ -22,6 +22,7 @@ import GI.Cairo.Render
 import GI.Gio qualified as Gio
 
 import Draw
+import Theme
 
 data Disk = Disk
     { dMount :: Text
@@ -81,13 +82,13 @@ rowH = 38
 disksSize :: Int -> (Double, Double)
 disksSize n = (300, 46 + rowH * fromIntegral (max 1 n))
 
-renderDisks :: [Disk] -> Render ()
-renderDisks disks = do
+renderDisks :: Theme -> [Disk] -> Render ()
+renderDisks th disks = do
     let (w, h) = disksSize (length disks)
         pad = 18
-    card (Rect 0.5 0.5 (w - 1) (h - 1))
-    font FontWeightNormal 12
-    setSourceRGBA 1 1 1 0.65
+    card th (Rect 0.5 0.5 (w - 1) (h - 1))
+    font th FontWeightNormal 12
+    dim th
     moveTo pad 30
     showText ("Disks" :: String)
     forM_ (zip [0 :: Int ..] disks) $ \(i, d) -> do
@@ -95,15 +96,15 @@ renderDisks disks = do
             frac = dUsed d / dSize d
             barY = y + 22
             barW = w - 2 * pad
-        setSourceRGBA 1 1 1 0.95
-        pangoLine pad y (barW * 0.45) 13 False (dMount d)
-        font FontWeightNormal 11
-        setSourceRGBA 1 1 1 0.65
+        ink th
+        pangoLine th pad y (barW * 0.45) 13 False (dMount d)
+        font th FontWeightNormal 11
+        dim th
         rightAligned (w - pad) (y + 12) (humanBytes (dUsed d) <> " of " <> humanBytes (dSize d))
 
         setLineWidth 6
         setLineCap LineCapRound
-        setSourceRGBA 1 1 1 0.13
+        track th
         newPath >> moveTo (pad + 3) barY >> lineTo (pad + barW - 3) barY >> stroke
-        rgba (levelColor frac) 1
+        rgba (levelColor th frac) 1
         newPath >> moveTo (pad + 3) barY >> lineTo (pad + 3 + (barW - 6) * frac) barY >> stroke

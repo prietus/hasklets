@@ -32,6 +32,7 @@ import Metrics
 import Mpris
 import Processes
 import Settings
+import Theme
 import Weather
 
 main :: IO ()
@@ -91,21 +92,21 @@ sample st = do
   where
     push v s = Seq.drop (Seq.length s + 1 - historyLen) (s |> v)
 
-renderSystem :: State -> Render ()
-renderSystem st = do
+renderSystem :: Theme -> State -> Render ()
+renderSystem th st = do
     let s = cardSize
         pad = 18
         mid = s / 2
         cellW = mid - pad - 8
         cellH = mid - pad - 8
-    card (Rect 0.5 0.5 (s - 1) (s - 1))
-    gauge (Rect pad pad cellW cellH) "CPU" (stCpu st)
-    gauge (Rect (mid + 8) pad cellW cellH) "Memory" (stMem st)
-    divider (mid, pad) (mid, mid - 8)
-    divider (pad, mid) (s - pad, mid)
-    divider (mid, mid + 8) (mid, s - pad)
-    sparkTile (Rect pad (mid + 8) cellW cellH) "Network · up" (stUp st)
-    sparkTile (Rect (mid + 8) (mid + 8) cellW cellH) "Network · down" (stDown st)
+    card th (Rect 0.5 0.5 (s - 1) (s - 1))
+    gauge th (Rect pad pad cellW cellH) "CPU" (stCpu st)
+    gauge th (Rect (mid + 8) pad cellW cellH) "Memory" (stMem st)
+    divider th (mid, pad) (mid, mid - 8)
+    divider th (pad, mid) (s - pad, mid)
+    divider th (mid, mid + 8) (mid, s - pad)
+    sparkTile th (Rect pad (mid + 8) cellW cellH) "Network · up" (stUp st)
+    sparkTile th (Rect (mid + 8) (mid + 8) cellW cellH) "Network · down" (stDown st)
 
 -- Shared state --------------------------------------------------------------
 
@@ -257,15 +258,15 @@ addWidget sh cfg threads box kind = case kind of
         previous <- readIORef (shWeatherPlace sh)
         when (previous /= Just place) $ writeIORef (shWeather sh) Nothing
         writeIORef (shWeatherPlace sh) (Just place)
-        area <- canvas box weatherSize (renderWeather place <$> readIORef (shWeather sh))
+        area <- canvas box weatherSize (renderWeather th place <$> readIORef (shWeather sh))
         background . weatherLoop place $ \w -> do
             writeIORef (shWeather sh) (Just w)
             redrawLater area
     SystemW -> do
-        area <- canvas box (cardSize, cardSize) (renderSystem <$> readIORef (shSystem sh))
+        area <- canvas box (cardSize, cardSize) (renderSystem th <$> readIORef (shSystem sh))
         writeIORef (shSystemRedraw sh) (Gtk.widgetQueueDraw area)
     MprisW -> forM_ (shBus sh) $ \conn -> do
-        area <- canvas box mprisSize (renderMpris <$> readIORef (shNow sh))
+        area <- canvas box mprisSize (renderMpris th <$> readIORef (shNow sh))
         background . mprisLoop conn $ \n -> do
             writeIORef (shNow sh) n
             redrawLater area
@@ -279,7 +280,7 @@ addWidget sh cfg threads box kind = case kind of
     DisksW -> do
         -- The card height follows the number of disks.
         known <- length <$> readIORef (shDisks sh)
-        area <- canvas box (disksSize known) (renderDisks <$> readIORef (shDisks sh))
+        area <- canvas box (disksSize known) (renderDisks th <$> readIORef (shDisks sh))
         background . disksLoop $ \ds -> do
             writeIORef (shDisks sh) ds
             void . GLib.idleAdd GLib.PRIORITY_DEFAULT $ do
@@ -288,11 +289,12 @@ addWidget sh cfg threads box kind = case kind of
                 pure False
     ProcessesW -> do
         let rows = cfgProcessRows cfg
-        area <- canvas box (processesSize rows) (renderProcesses rows . take rows <$> readIORef (shProcs sh))
+        area <- canvas box (processesSize rows) (renderProcesses th rows . take rows <$> readIORef (shProcs sh))
         background . processLoop rows $ \ps -> do
             writeIORef (shProcs sh) ps
             redrawLater area
   where
+    th = cfgTheme cfg
     background io = forkIO io >>= \t -> modifyIORef threads (t :)
 
 -- | Adds to the column a canvas of the given size, painted with @draw@.

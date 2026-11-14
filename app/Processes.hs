@@ -27,6 +27,7 @@ import Text.Printf (printf)
 import Text.Read (readMaybe)
 
 import Draw
+import Theme
 import Metrics (readCpuTicks)
 
 data Proc = Proc
@@ -111,28 +112,28 @@ rowH = 24
 processesSize :: Int -> (Double, Double)
 processesSize rows = (300, 56 + rowH * fromIntegral rows)
 
-renderProcesses :: Int -> [Proc] -> Render ()
-renderProcesses rows procs = do
+renderProcesses :: Theme -> Int -> [Proc] -> Render ()
+renderProcesses th rows procs = do
     let (w, h) = processesSize rows
         pad = 18
         memX = w - pad
         cpuX = w - pad - 74
-    card (Rect 0.5 0.5 (w - 1) (h - 1))
-    font FontWeightNormal 12
-    setSourceRGBA 1 1 1 0.65
+    card th (Rect 0.5 0.5 (w - 1) (h - 1))
+    font th FontWeightNormal 12
+    dim th
     moveTo pad 30
     showText ("Processes" :: String)
-    font FontWeightNormal 11
+    font th FontWeightNormal 11
     rightAligned cpuX 30 "CPU"
     rightAligned memX 30 "Memory"
     forM_ (zip [0 :: Int ..] procs) $ \(i, p) -> do
         let y = 44 + rowH * fromIntegral i
-        setSourceRGBA 1 1 1 0.95
-        pangoLine pad y (cpuX - 52 - pad) 13 False (pName p)
-        font FontWeightBold 12
+        ink th
+        pangoLine th pad y (cpuX - 52 - pad) 13 False (pName p)
+        font th FontWeightBold 12
         -- The color follows the load on one core.
-        rgba (levelColor (pCpu p / 100)) 1
+        rgba (levelColor th (pCpu p / 100)) 1
         rightAligned cpuX (y + 13) (printf "%.1f %%" (pCpu p))
-        font FontWeightNormal 12
-        setSourceRGBA 1 1 1 0.65
+        font th FontWeightNormal 12
+        dim th
         rightAligned memX (y + 13) (humanBytes (pMem p))

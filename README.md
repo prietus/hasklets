@@ -16,6 +16,7 @@ compositor with wlr-layer-shell; made to go with
   play-pause / next buttons for any MPRIS player, over D-Bus
 * **Disks**: used and total space of every real filesystem
 * **Processes**: the ones using the most CPU, with their memory
+* five themes: dark, light, Nord, Gruvbox and a translucent glass look
 * configured with a JSON file that is reloaded when it changes, or from a
   settings window (right-click any widget)
 * gi-gtk4 and [gtk4-layer-shell](https://github.com/wmww/gtk4-layer-shell);
@@ -50,6 +51,7 @@ configuration is kept.
 
 ```json
 {
+  "theme": "mocha",
   "corner": "top-left",
   "margin": 24,
   "gap": 14,
@@ -61,6 +63,7 @@ configuration is kept.
 
 | Field | Default | |
 |---|---|---|
+| `theme` | `"mocha"` | see [Themes](#themes) |
 | `corner` | `"top-left"` | or `"top-right"`, `"bottom-left"`, `"bottom-right"` |
 | `margin` | `24` | distance from the screen edges, in logical pixels |
 | `gap` | `14` | space between widgets |
@@ -71,11 +74,27 @@ configuration is kept.
 
 Missing fields take their default.
 
+### Themes
+
+![The five themes: mocha, latte, nord, gruvbox and glass](docs/themes.png)
+
+| `theme` | |
+|---|---|
+| `mocha` | Catppuccin Mocha: dark and flat, thin ring gauges (the default) |
+| `latte` | Catppuccin Latte: the light counterpart |
+| `nord` | Nord colors, squarer cards, arc gauges and bar charts |
+| `gruvbox` | Gruvbox colors, nearly square corners, monospace text, bar charts |
+| `glass` | translucent dark cards with large corners and arc gauges |
+
+A theme is a record in `app/Theme.hs` with the colors, the corner radius,
+the font and the style of gauges and charts; adding one is adding a record
+to the `themes` list.
+
 ### Settings window
 
 `hasklets --config`, or a right-click on any widget, opens a window that
 edits the same file: move widgets between columns or hide them, choose the
-corner and the spacing, look up the coordinates of a place by name (through
+theme, the corner and the spacing, look up the coordinates of a place by name (through
 Open-Meteo's geocoding service) and set the number of processes. *Apply*
 saves, and the running widgets pick the change up.
 
@@ -90,5 +109,6 @@ myManageHook = composeOne
 
 Each widget is a module in `app/` with a loop that fetches its data on its
 own thread and a `Render ()` that draws it; `Main.hs` puts them in the
-window according to the configuration, and `Draw.hs` has the shared
-drawing primitives (card, ring gauge, sparkline, text).
+window according to the configuration, `Draw.hs` has the shared drawing
+primitives (card, gauge, sparkline, text) and `Theme.hs` the themes they
+are styled with.

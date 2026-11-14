@@ -17,6 +17,7 @@ import GI.Gio qualified as Gio
 import GI.Gtk qualified as Gtk
 
 import Config
+import Theme
 import Weather (Place (..), geocode)
 
 runSettings :: IO ()
@@ -60,16 +61,19 @@ settingsWindow app = do
     layout <- newIORef (take (max 2 (length shown)) (shown <> repeat []) <> [hidden])
     refreshLists lists layout
 
-    -- Position.
-    heading root "Position"
+    -- Appearance.
+    heading root "Appearance"
     grid <- newGrid root
+    theme <- Gtk.dropDownNewFromStrings (map themeLabel themes)
+    Gtk.dropDownSetSelected theme (fromIntegral (length (takeWhile ((/= themeId (cfgTheme cfg)) . themeId) themes)))
+    gridRow grid 0 "Theme" theme
     corner <- Gtk.dropDownNewFromStrings (map cornerLabel [minBound .. maxBound])
     Gtk.dropDownSetSelected corner (fromIntegral (fromEnum (cfgCorner cfg)))
-    gridRow grid 0 "Screen corner" corner
+    gridRow grid 1 "Screen corner" corner
     margin <- spin 0 500 1 0 (fromIntegral (cfgMargin cfg))
-    gridRow grid 1 "Margin from the edge" margin
+    gridRow grid 2 "Margin from the edge" margin
     gap <- spin 0 200 1 0 (fromIntegral (cfgGap cfg))
-    gridRow grid 2 "Space between widgets" gap
+    gridRow grid 3 "Space between widgets" gap
 
     -- Weather.
     heading root "Weather"
@@ -124,6 +128,7 @@ settingsWindow app = do
     Gtk.boxAppend actions apply
     void $ Gtk.onButtonClicked apply $ do
         groups <- readIORef layout
+        themeIx <- Gtk.dropDownGetSelected theme
         cornerIx <- Gtk.dropDownGetSelected corner
         marginV <- Gtk.spinButtonGetValue margin
         gapV <- Gtk.spinButtonGetValue gap
@@ -133,7 +138,8 @@ settingsWindow app = do
         rowsV <- Gtk.spinButtonGetValue rows
         let new =
                 Config
-                    { cfgCorner = toEnum (min (fromEnum (maxBound :: Corner)) (fromIntegral cornerIx))
+                    { cfgTheme = themes !! min (length themes - 1) (fromIntegral themeIx)
+                    , cfgCorner = toEnum (min (fromEnum (maxBound :: Corner)) (fromIntegral cornerIx))
                     , cfgMargin = round marginV
                     , cfgGap = round gapV
                     , -- The last list holds the hidden widgets.

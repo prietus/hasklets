@@ -37,6 +37,7 @@ import System.FilePath ((</>))
 import System.Process (readProcessWithExitCode)
 
 import Draw
+import Theme
 
 data Track = Track
     { trBus :: Text
@@ -152,13 +153,13 @@ mprisLoop conn publish = go Nothing
   where
     -- cache: last cover art URL and its image, so it isn't reloaded every second.
     go cache = do
-        track <- currentTrack conn
-        cache' <- case track >>= trArtUrl of
+        current <- currentTrack conn
+        cache' <- case current >>= trArtUrl of
             Nothing -> pure Nothing
             Just url
                 | Just (old, _) <- cache, old == url -> pure cache
                 | otherwise -> Just . (url,) <$> loadArt url
-        publish (fmap (\t -> Now t (cache' >>= snd)) track)
+        publish (fmap (\t -> Now t (cache' >>= snd)) current)
         threadDelay 1000000
         go cache'
 
@@ -202,24 +203,24 @@ actionAt x y = fst <$> find hit buttons
   where
     hit (_, bx) = abs (x - bx) <= 16 && abs (y - controlsY) <= 16
 
-renderMpris :: Maybe Now -> Render ()
-renderMpris now = do
+renderMpris :: Theme -> Maybe Now -> Render ()
+renderMpris th now = do
     let (w, h) = mprisSize
         textW = w - textLeft - 16
-    card (Rect 0.5 0.5 (w - 1) (h - 1))
+    card th (Rect 0.5 0.5 (w - 1) (h - 1))
     case now of
         Nothing -> do
-            artwork Nothing
-            setSourceRGBA 1 1 1 0.55
-            pangoLine textLeft 38 textW 13 False "Nothing playing"
+            artwork th Nothing
+            dim th
+            pangoLine th textLeft 38 textW 13 False "Nothing playing"
         Just (Now tr art) -> do
-            artwork art
-            setSourceRGBA 1 1 1 0.95
-            pangoLine textLeft 14 textW 14 True (trTitle tr)
-            setSourceRGBA 1 1 1 0.65
-            pangoLine textLeft 33 textW 12 False (trArtist tr)
+            artwork th art
+            ink th
+            pangoLine th textLeft 14 textW 14 True (trTitle tr)
+            dim th
+            pangoLine th textLeft 33 textW 12 False (trArtist tr)
 
-            setSourceRGBA 1 1 1 0.90
+            ink th
             forM_ buttons $ \(action, bx) -> case action of
                 Previous -> skip bx (-1)
                 Next -> skip bx 1
@@ -237,9 +238,9 @@ renderMpris now = do
                     frac = max 0 (min 1 (fromIntegral (trPosition tr) / fromIntegral (trLength tr)))
                 setLineWidth 3
                 setLineCap LineCapRound
-                setSourceRGBA 1 1 1 0.15
+                track th
                 newPath >> moveTo x0 controlsY >> lineTo x1 controlsY >> stroke
-                setSourceRGBA 1 1 1 0.85
+                ink th
                 newPath >> moveTo x0 controlsY >> lineTo (x0 + (x1 - x0) * frac) controlsY >> stroke
   where
     -- Triangle with its base at @x@ pointing towards @dir@ (1 right, -1 left).
@@ -258,13 +259,13 @@ renderMpris now = do
         fill
 
 -- | Cover art clipped to rounded corners, or a placeholder with a note.
-artwork :: Maybe GdkPixbuf.Pixbuf -> Render ()
-artwork art = do
+artwork :: Theme -> Maybe GdkPixbuf.Pixbuf -> Render ()
+artwork th art = do
     let Rect x y w h = artRect
     save
-    roundRect artRect 10
+    roundRect artRect (min 10 (cardRadius th))
     clip
-    setSourceRGBA 1 1 1 0.08
+    track th
     paint
     case art of
         Just pixbuf -> do
@@ -279,7 +280,7 @@ artwork art = do
         Nothing -> do
             let cx = x + w / 2
                 cy = y + h / 2
-            setSourceRGBA 1 1 1 0.35
+            dim th
             newPath
             arc (cx - 5) (cy + 9) 6 0 (2 * pi)
             fill

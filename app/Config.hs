@@ -25,6 +25,7 @@ import Data.Text qualified as T
 import System.Directory
 import System.FilePath (takeDirectory, (</>))
 
+import Theme
 import Weather (Place (..))
 
 data WidgetKind = WeatherW | SystemW | MprisW | DisksW | ProcessesW
@@ -67,7 +68,8 @@ cornerLabel c = case c of
     BottomRight -> "Bottom right"
 
 data Config = Config
-    { cfgCorner :: Corner
+    { cfgTheme :: Theme
+    , cfgCorner :: Corner
     , cfgMargin :: Int
     -- ^ Distance from the screen edges.
     , cfgGap :: Int
@@ -78,12 +80,18 @@ data Config = Config
     -- ^ Forecast location. Its coordinates are sent to api.open-meteo.com.
     , cfgProcessRows :: Int
     }
-    deriving (Eq)
+
+-- Themes are compared by name.
+instance Eq Config where
+    a == b = key a == key b
+      where
+        key c = (themeId (cfgTheme c), cfgCorner c, cfgMargin c, cfgGap c, cfgColumns c, cfgPlace c, cfgProcessRows c)
 
 defaultConfig :: Config
 defaultConfig =
     Config
-        { cfgCorner = TopLeft
+        { cfgTheme = defaultTheme
+        , cfgCorner = TopLeft
         , cfgMargin = 24
         , cfgGap = 14
         , cfgColumns = [[WeatherW, SystemW, MprisW], [DisksW, ProcessesW]]
@@ -94,6 +102,7 @@ defaultConfig =
 -- Missing fields take their default value.
 instance FromJSON Config where
     parseJSON = withObject "config" $ \o -> do
+        theme <- o .:? "theme" >>= maybe (pure (cfgTheme d)) parseTheme
         corner <- o .:? "corner" >>= maybe (pure (cfgCorner d)) parseCorner
         margin <- o .:? "margin" .!= cfgMargin d
         gap <- o .:? "gap" .!= cfgGap d
@@ -106,7 +115,8 @@ instance FromJSON Config where
         rows <- processes .:? "rows" .!= cfgProcessRows d
         pure
             Config
-                { cfgCorner = corner
+                { cfgTheme = theme
+                , cfgCorner = corner
                 , cfgMargin = clamp 0 500 margin
                 , cfgGap = clamp 0 200 gap
                 , cfgColumns = columns
@@ -116,6 +126,12 @@ instance FromJSON Config where
       where
         d = defaultConfig
         clamp lo hi = max lo . min hi
+
+parseTheme :: Text -> Parser Theme
+parseTheme t =
+    maybe (fail ("unknown theme: " <> T.unpack t <> " (available: " <> names <> ")")) pure (themeNamed t)
+  where
+    names = T.unpack (T.intercalate ", " (map themeId themes))
 
 parseCorner :: Text -> Parser Corner
 parseCorner t =
@@ -137,7 +153,8 @@ encodeConfig cfg = "{\n" <> BL.intercalate ",\n" (map field fields) <> "\n}\n"
     field (k, v) = "  " <> encode (k :: Text) <> ": " <> encode v
     place = cfgPlace cfg
     fields =
-        [ ("corner", toJSON (cornerId (cfgCorner cfg)))
+        [ ("theme", toJSON (themeId (cfgTheme cfg)))
+        , ("corner", toJSON (cornerId (cfgCorner cfg)))
         , ("margin", toJSON (cfgMargin cfg))
         , ("gap", toJSON (cfgGap cfg))
         , ("columns", toJSON (map (map widgetId) (cfgColumns cfg)))

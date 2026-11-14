@@ -26,6 +26,7 @@ import System.Process (readProcessWithExitCode)
 import Text.Printf (printf)
 
 import Draw
+import Theme
 
 data Place = Place
     { placeName :: String
@@ -186,29 +187,29 @@ describe c
 weatherSize :: (Double, Double)
 weatherSize = (300, 150)
 
-renderWeather :: Place -> Maybe Weather -> Render ()
-renderWeather place mw = do
+renderWeather :: Theme -> Place -> Maybe Weather -> Render ()
+renderWeather th place mw = do
     let (w, h) = weatherSize
         pad = 16
-    card (Rect 0.5 0.5 (w - 1) (h - 1))
-    setSourceRGBA 1 1 1 0.95
-    font FontWeightBold 14
+    card th (Rect 0.5 0.5 (w - 1) (h - 1))
+    ink th
+    font th FontWeightBold 14
     moveTo pad 27
     showText (placeName place)
     case mw of
         Nothing -> do
-            font FontWeightNormal 12
-            setSourceRGBA 1 1 1 0.55
+            font th FontWeightNormal 12
+            dim th
             centered (w / 2) (h / 2 + 16) "Loading…"
         Just wx -> do
-            font FontWeightNormal 38
-            setSourceRGBA 1 1 1 0.95
+            font th FontWeightNormal 38
+            ink th
             moveTo (pad - 2) 66
             showText (degrees (wTemp wx))
 
-            icon (sky (wCode wx)) (wIsDay wx) (w - pad - 11) 21 24
-            font FontWeightNormal 12
-            setSourceRGBA 1 1 1 0.95
+            icon th (sky (wCode wx)) (wIsDay wx) (w - pad - 11) 21 24
+            font th FontWeightNormal 12
+            ink th
             rightAligned (w - pad) 50 (describe (wCode wx))
             rightAligned (w - pad) 66 (printf "H: %s  L: %s" (degrees (wMax wx)) (degrees (wMin wx)))
 
@@ -216,25 +217,25 @@ renderWeather place mw = do
                 colW = (w - 2 * pad) / fromIntegral (max 1 (length hours))
             forM_ (zip [0 :: Int ..] hours) $ \(i, hr) -> do
                 let cx = pad + colW * (fromIntegral i + 0.5)
-                font FontWeightNormal 11
-                setSourceRGBA 1 1 1 0.65
+                font th FontWeightNormal 11
+                dim th
                 centered cx 91 (hLabel hr)
-                icon (sky (hCode hr)) (hIsDay hr) cx 108 22
-                font FontWeightBold 12
-                setSourceRGBA 1 1 1 0.95
+                icon th (sky (hCode hr)) (hIsDay hr) cx 108 22
+                font th FontWeightBold 12
+                ink th
                 centered cx 136 (degrees (hTemp hr))
 
 degrees :: Double -> String
 degrees t = show (round t :: Int) <> "°"
 
 -- | Icon centered on @(cx, cy)@ inside a square of side @s@.
-icon :: Sky -> Bool -> Double -> Double -> Double -> Render ()
-icon kind isDay cx cy s = case kind of
+icon :: Theme -> Sky -> Bool -> Double -> Double -> Double -> Render ()
+icon th kind isDay cx cy s = case kind of
     Clear -> orb cx cy 0.24
     Partly -> orb (cx + 0.16 * s) (cy - 0.14 * s) 0.17 >> cloud (cx - 0.04 * s) (cy + 0.06 * s) 0.85
     Cloudy -> cloud cx cy 1
     Fog -> do
-        setSourceRGBA 0.80 0.82 0.86 0.9
+        rgba (cloudColor th) 0.9
         setLineWidth (0.09 * s)
         setLineCap LineCapRound
         forM_ [-0.22, 0, 0.22] $ \dy -> do
@@ -244,7 +245,7 @@ icon kind isDay cx cy s = case kind of
             stroke
     Rain -> do
         cloud cx (cy - 0.10 * s) 0.9
-        setSourceRGBA 0.40 0.68 1.00 1
+        rgba (rainColor th) 1
         setLineWidth (0.07 * s)
         setLineCap LineCapRound
         forM_ [-0.20, 0, 0.20] $ \dx -> do
@@ -254,14 +255,14 @@ icon kind isDay cx cy s = case kind of
             stroke
     Snow -> do
         cloud cx (cy - 0.10 * s) 0.9
-        setSourceRGBA 1 1 1 1
+        rgba (cloudColor th) 1
         forM_ [-0.20, 0, 0.20] $ \dx -> do
             newPath
             arc (cx + dx * s) (cy + 0.32 * s) (0.05 * s) 0 (2 * pi)
             fill
     Storm -> do
         cloud cx (cy - 0.10 * s) 0.9
-        setSourceRGBA 1.00 0.80 0.25 1
+        rgba (sunColor th) 1
         newPath
         moveTo (cx + 0.04 * s) (cy + 0.10 * s)
         lineTo (cx - 0.10 * s) (cy + 0.30 * s)
@@ -275,7 +276,7 @@ icon kind isDay cx cy s = case kind of
     -- Sun by day, moon by night.
     orb x y r
         | isDay = do
-            setSourceRGBA 1.00 0.78 0.25 1
+            rgba (sunColor th) 1
             newPath
             arc x y (r * s) 0 (2 * pi)
             fill
@@ -292,7 +293,7 @@ icon kind isDay cx cy s = case kind of
         | otherwise = do
             let rm = (r + 0.08) * s
             pushGroup
-            setSourceRGBA 0.85 0.88 0.98 1
+            rgba (cloudColor th) 1
             newPath
             arc x y rm 0 (2 * pi)
             fill
@@ -304,7 +305,7 @@ icon kind isDay cx cy s = case kind of
             paint
     cloud x y k = do
         let u = k * s
-        setSourceRGBA 0.88 0.90 0.94 1
+        rgba (cloudColor th) 1
         forM_ [(-0.20, 0.08, 0.15), (0.00, -0.04, 0.21), (0.20, 0.08, 0.15)] $ \(dx, dy, r) -> do
             newPath
             arc (x + dx * u) (y + dy * u) (r * u) 0 (2 * pi)
