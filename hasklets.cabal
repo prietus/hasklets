@@ -1,0 +1,53 @@
+cabal-version:      3.0
+name:               hasklets
+version:            0.1.0.0
+synopsis:           Desktop widgets for Wayland (gtk4-layer-shell) in Haskell
+description:
+  hasklets draws widgets on the desktop of Wayland compositors with
+  wlr-layer-shell: weather, CPU/memory/network, media player (MPRIS), disks
+  and top processes. Written in Haskell with gi-gtk4 and cairo, configured
+  with a JSON file and a settings window.
+license:            BSD-3-Clause
+license-file:       LICENSE
+author:             prietus
+maintainer:         prietus@live.com
+category:           System
+build-type:         Simple
+extra-doc-files:    README.md
+
+executable hasklets
+    main-is:          Main.hs
+    other-modules:    Config
+                      Disks
+                      Draw
+                      Metrics
+                      Mpris
+                      Processes
+                      Settings
+                      Weather
+    hs-source-dirs:   app
+    default-language: GHC2021
+    -- -threaded: data is fetched on separate threads so the GTK main loop
+    -- never blocks.
+    ghc-options:      -Wall -threaded
+    build-depends:    base >=4.18 && <5
+                    , aeson
+                    , bytestring
+                    , containers
+                    , directory
+                    , filepath
+                    , process
+                    , text
+                    , haskell-gi-base
+                    , gi-glib
+                    , gi-gio
+                    , gi-gobject
+                    , gi-gdk4
+                    , gi-gdkpixbuf
+                    , gi-gtk4
+                    , gi-gtk4-layer-shell
+                    , gi-cairo
+                    , gi-cairo-render
+                    , gi-cairo-connector
+                    , gi-pango
+                    , gi-pangocairo
