@@ -54,6 +54,7 @@ configuration is kept.
 ```json
 {
   "theme": "mocha",
+  "scale": 1,
   "corner": "top-left",
   "margin": 24,
   "gap": 14,
@@ -66,6 +67,7 @@ configuration is kept.
 | Field | Default | |
 |---|---|---|
 | `theme` | `"mocha"` | see [Themes](#themes) |
+| `scale` | `1` | size of the widgets, 0.5 to 3: `1.25` makes them a quarter bigger |
 | `corner` | `"top-left"` | or `"top-right"`, `"bottom-left"`, `"bottom-right"` |
 | `margin` | `24` | distance from the screen edges, in logical pixels |
 | `gap` | `14` | space between widgets |
@@ -124,7 +126,7 @@ for daily, weekly, monthly and yearly rules; the rarer parts of a rule
 
 `hasklets --config`, or a right-click on any widget, opens a window that
 edits the same file: move widgets between columns or hide them, choose the
-theme, the corner and the spacing, add calendar accounts, look up the coordinates of a place by name (through
+theme, the size, the corner and the spacing, add calendar accounts, look up the coordinates of a place by name (through
 Open-Meteo's geocoding service) and set the number of processes. *Apply*
 saves, and the running widgets pick the change up.
 

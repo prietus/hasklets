@@ -71,6 +71,8 @@ cornerLabel c = case c of
 
 data Config = Config
     { cfgTheme :: Theme
+    , cfgScale :: Double
+    -- ^ Size of the widgets: 1 is the normal size, 1.25 a quarter bigger.
     , cfgCorner :: Corner
     , cfgMargin :: Int
     -- ^ Distance from the screen edges.
@@ -87,12 +89,13 @@ data Config = Config
 instance Eq Config where
     a == b = key a == key b
       where
-        key c = (themeId (cfgTheme c), cfgCorner c, cfgMargin c, cfgGap c, cfgColumns c, cfgPlace c, cfgProcessRows c)
+        key c = (themeId (cfgTheme c), cfgScale c, cfgCorner c, cfgMargin c, cfgGap c, cfgColumns c, cfgPlace c, cfgProcessRows c)
 
 defaultConfig :: Config
 defaultConfig =
     Config
         { cfgTheme = defaultTheme
+        , cfgScale = 1
         , cfgCorner = TopLeft
         , cfgMargin = 24
         , cfgGap = 14
@@ -105,6 +108,7 @@ defaultConfig =
 instance FromJSON Config where
     parseJSON = withObject "config" $ \o -> do
         theme <- o .:? "theme" >>= maybe (pure (cfgTheme d)) parseTheme
+        size <- o .:? "scale" .!= cfgScale d
         corner <- o .:? "corner" >>= maybe (pure (cfgCorner d)) parseCorner
         margin <- o .:? "margin" .!= cfgMargin d
         gap <- o .:? "gap" .!= cfgGap d
@@ -118,6 +122,7 @@ instance FromJSON Config where
         pure
             Config
                 { cfgTheme = theme
+                , cfgScale = clamp 0.5 3 size
                 , cfgCorner = corner
                 , cfgMargin = clamp 0 500 margin
                 , cfgGap = clamp 0 200 gap
@@ -156,6 +161,7 @@ encodeConfig cfg = "{\n" <> BL.intercalate ",\n" (map field fields) <> "\n}\n"
     place = cfgPlace cfg
     fields =
         [ ("theme", toJSON (themeId (cfgTheme cfg)))
+        , ("scale", toJSON (cfgScale cfg))
         , ("corner", toJSON (cornerId (cfgCorner cfg)))
         , ("margin", toJSON (cfgMargin cfg))
         , ("gap", toJSON (cfgGap cfg))

@@ -14,6 +14,7 @@ import Data.IORef
 import Data.Sequence (Seq, (|>))
 import Data.Sequence qualified as Seq
 import GI.Cairo.Render (Render)
+import GI.Cairo.Render qualified as Cairo
 import GI.Cairo.Render.Connector (renderWithContext)
 import GI.GLib qualified as GLib
 import GI.Gio qualified as Gio
@@ -241,7 +242,8 @@ build win layered sh cfg = do
             BottomLeft -> (LS.EdgeBottom, LS.EdgeLeft)
             BottomRight -> (LS.EdgeBottom, LS.EdgeRight)
         valign = if vertical == LS.EdgeTop then Gtk.AlignStart else Gtk.AlignEnd
-        gap = fromIntegral (cfgGap cfg)
+        -- The space between widgets grows with them.
+        gap = round (fromIntegral (cfgGap cfg) * cfgScale cfg)
     when layered $
         forM_ [LS.EdgeTop, LS.EdgeBottom, LS.EdgeLeft, LS.EdgeRight] $ \edge -> do
             let anchored = edge == vertical || edge == horizontal
@@ -290,7 +292,7 @@ addWidget sh cfg threads box kind = case kind of
         click <- Gtk.gestureClickNew
         void $ Gtk.onGestureClickPressed click $ \_ x y -> do
             playing <- readIORef (shNow sh)
-            case (playing, actionAt x y) of
+            case (playing, actionAt (x / k) (y / k)) of
                 (Just n, Just action) -> void (forkIO (send conn n action))
                 _ -> pure ()
         Gtk.widgetAddController area click
@@ -301,7 +303,7 @@ addWidget sh cfg threads box kind = case kind of
         background . disksLoop $ \ds -> do
             writeIORef (shDisks sh) ds
             void . GLib.idleAdd GLib.PRIORITY_DEFAULT $ do
-                Gtk.drawingAreaSetContentHeight area (round (snd (disksSize (length ds))))
+                Gtk.drawingAreaSetContentHeight area (round (k * snd (disksSize (length ds))))
                 Gtk.widgetQueueDraw area
                 pure False
     ProcessesW -> do
@@ -320,18 +322,21 @@ addWidget sh cfg threads box kind = case kind of
             redrawLater area
   where
     th = cfgTheme cfg
+    k = cfgScale cfg
+    canvas = scaledCanvas k
     background io = forkIO io >>= \t -> modifyIORef threads (t :)
 
--- | Adds to the column a canvas of the given size, painted with @draw@.
+-- | Adds to the column a canvas of the given size, painted with @draw@ and
+-- enlarged by the factor @k@ (drawing code always works at the normal size).
 -- Right-clicking any widget opens the settings window.
-canvas :: Gtk.Box -> (Double, Double) -> IO (Render ()) -> IO Gtk.DrawingArea
-canvas box (w, h) draw = do
+scaledCanvas :: Double -> Gtk.Box -> (Double, Double) -> IO (Render ()) -> IO Gtk.DrawingArea
+scaledCanvas k box (w, h) draw = do
     area <- Gtk.drawingAreaNew
-    Gtk.drawingAreaSetContentWidth area (round w)
-    Gtk.drawingAreaSetContentHeight area (round h)
+    Gtk.drawingAreaSetContentWidth area (round (k * w))
+    Gtk.drawingAreaSetContentHeight area (round (k * h))
     Gtk.drawingAreaSetDrawFunc area . Just $ \_ ctx _ _ -> do
         r <- draw
-        renderWithContext r ctx
+        renderWithContext (Cairo.scale k k >> r) ctx
     secondary <- Gtk.gestureClickNew
     Gtk.gestureSingleSetButton secondary 3
     void $ Gtk.onGestureClickPressed secondary $ \_ _ _ -> openSettings

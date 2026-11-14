@@ -76,6 +76,8 @@ settingsWindow app = do
     corner <- Gtk.dropDownNewFromStrings (map cornerLabel [minBound .. maxBound])
     Gtk.dropDownSetSelected corner (fromIntegral (fromEnum (cfgCorner cfg)))
     gridRow grid 1 "Screen corner" corner
+    size <- spin 0.5 3 0.05 2 (cfgScale cfg)
+    gridRow grid 4 "Widget size (1 = normal)" size
     margin <- spin 0 500 1 0 (fromIntegral (cfgMargin cfg))
     gridRow grid 2 "Margin from the edge" margin
     gap <- spin 0 200 1 0 (fromIntegral (cfgGap cfg))
@@ -188,6 +190,7 @@ settingsWindow app = do
         groups <- readIORef layout
         themeIx <- Gtk.dropDownGetSelected theme
         cornerIx <- Gtk.dropDownGetSelected corner
+        sizeV <- Gtk.spinButtonGetValue size
         marginV <- Gtk.spinButtonGetValue margin
         gapV <- Gtk.spinButtonGetValue gap
         nameV <- Gtk.editableGetText name
@@ -200,6 +203,7 @@ settingsWindow app = do
                     , cfgCorner = toEnum (min (fromEnum (maxBound :: Corner)) (fromIntegral cornerIx))
                     , cfgMargin = round marginV
                     , cfgGap = round gapV
+                    , cfgScale = sizeV
                     , -- The last list holds the hidden widgets.
                       cfgColumns = filter (not . null) (init groups)
                     , cfgPlace = Place (T.unpack (T.strip nameV)) latV lonV
