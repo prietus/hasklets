@@ -1,8 +1,9 @@
 {-# OPTIONS_GHC -Wno-simplifiable-class-constraints #-}
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Settings window (@hasklets --config@): edits the configuration JSON.
--- The running widgets watch that file and rearrange when it is saved.
+-- | Settings window (@hasklets --config@): edits the configuration JSON and
+-- the calendar accounts. The running widgets watch both files and rearrange
+-- when they are saved.
 module Settings (runSettings) where
 
 import Control.Concurrent (forkIO)
@@ -15,7 +16,9 @@ import GI.GLib qualified as GLib
 import GI.GObject qualified as GObject
 import GI.Gio qualified as Gio
 import GI.Gtk qualified as Gtk
+import GI.Pango qualified as Pango
 
+import Accounts
 import Config
 import Theme
 import Weather (Place (..), geocode)
@@ -40,6 +43,9 @@ settingsWindow app = do
 
     win <- Gtk.applicationWindowNew app
     Gtk.windowSetTitle win (Just "hasklets Settings")
+    -- An explicit size: a window manager that floats the window needs one
+    -- to place it (the content scrolls if it does not fit).
+    Gtk.windowSetDefaultSize win 560 760
 
     root <- Gtk.boxNew Gtk.OrientationVertical 10
     forM_ [Gtk.widgetSetMarginTop, Gtk.widgetSetMarginBottom, Gtk.widgetSetMarginStart, Gtk.widgetSetMarginEnd] $
@@ -113,6 +119,58 @@ settingsWindow app = do
     rows <- spin 1 10 1 0 (fromIntegral (cfgProcessRows cfg))
     gridRow pgrid 0 "Processes shown" rows
 
+    -- Calendars. The accounts go to their own file, not to the configuration.
+    heading root "Calendars"
+    stored <- either (const []) id <$> loadAccounts
+    accounts <- newIORef stored
+    savedAccounts <- newIORef stored
+    accountList <- Gtk.boxNew Gtk.OrientationVertical 2
+    Gtk.boxAppend root accountList
+    refreshAccounts accountList accounts
+    cgrid <- newGrid root
+    provider <- Gtk.dropDownNewFromStrings (map providerLabel [minBound .. maxBound])
+    gridRow cgrid 0 "Service" provider
+    user <- Gtk.entryNew
+    gridRow cgrid 1 "Email or user" user
+    password <- Gtk.passwordEntryNew
+    Gtk.passwordEntrySetShowPeekIcon password True
+    gridRow cgrid 2 "App password" password
+    address <- Gtk.entryNew
+    Gtk.entrySetPlaceholderText address (Just "Only for a CalDAV server or an iCal address")
+    gridRow cgrid 3 "Address" address
+    add <- Gtk.buttonNewWithLabel "Add account"
+    Gtk.widgetSetHalign add Gtk.AlignEnd
+    Gtk.boxAppend root add
+    calendarNote <-
+        note root "Accounts are saved on Apply, to a file only you can read. Move Calendar out of Hidden to show it."
+    void $ Gtk.onButtonClicked add $ do
+        kind <- toEnum . min (fromEnum (maxBound :: Provider)) . fromIntegral <$> Gtk.dropDownGetSelected provider
+        userV <- T.strip <$> Gtk.editableGetText user
+        passwordV <- T.strip <$> Gtk.editableGetText password
+        addressV <- T.strip <$> Gtk.editableGetText address
+        -- Each service only keeps the fields it uses. Google shows its app
+        -- passwords in groups separated by spaces that are not part of them.
+        let account = case kind of
+                ICloud -> Account kind userV passwordV ""
+                Google -> Account kind userV (T.filter (/= ' ') passwordV) ""
+                CalDav -> Account kind userV passwordV addressV
+                IcsUrl -> Account kind "" "" addressV
+            complete = case kind of
+                IcsUrl -> not (T.null addressV)
+                CalDav -> not (any T.null [userV, passwordV, addressV])
+                _ -> not (any T.null [userV, passwordV])
+        if complete
+            then do
+                modifyIORef accounts (<> [account])
+                refreshAccounts accountList accounts
+                forM_ [Gtk.editableSetText user, Gtk.editableSetText password, Gtk.editableSetText address] ($ "")
+                Gtk.labelSetText calendarNote "Added. Press Apply to save it."
+            else
+                Gtk.labelSetText calendarNote $ case kind of
+                    IcsUrl -> "An iCal address needs the address."
+                    CalDav -> "A CalDAV server needs the address, the user and the password."
+                    _ -> "This service needs the email and the app password."
+
     -- Save.
     status <- note root $ case loaded of
         Left err -> "The current file could not be read (" <> T.pack err <> "); showing the defaults."
@@ -147,11 +205,44 @@ settingsWindow app = do
                     , cfgPlace = Place (T.unpack (T.strip nameV)) latV lonV
                     , cfgProcessRows = round rowsV
                     }
-        saved <- try (saveConfig new)
+        saved <- try $ do
+            saveConfig new
+            -- The accounts file is only written when the accounts changed.
+            current <- readIORef accounts
+            before <- readIORef savedAccounts
+            when (current /= before) $ do
+                saveAccounts current
+                writeIORef savedAccounts current
         Gtk.labelSetText status $ case saved of
             Left e -> "Could not save: " <> T.pack (show (e :: IOException))
             Right () -> "Saved to " <> T.pack path
     pure win
+
+-- Calendar accounts ---------------------------------------------------------
+
+-- | Rebuilds the list of accounts, each with a button to remove it.
+refreshAccounts :: Gtk.Box -> IORef [Account] -> IO ()
+refreshAccounts list accounts = do
+    clear
+    current <- readIORef accounts
+    forM_ (zip [0 :: Int ..] current) $ \(i, account) -> do
+        row <- Gtk.boxNew Gtk.OrientationHorizontal 6
+        Gtk.boxAppend list row
+        label <- Gtk.labelNew (Just (accountLabel account))
+        Gtk.labelSetXalign label 0
+        Gtk.labelSetEllipsize label Pango.EllipsizeModeMiddle
+        Gtk.widgetSetHexpand label True
+        Gtk.boxAppend row label
+        remove <- Gtk.buttonNewWithLabel "Remove"
+        Gtk.widgetAddCssClass remove "flat"
+        Gtk.boxAppend row remove
+        void $ Gtk.onButtonClicked remove $ do
+            modifyIORef accounts (\as -> [a | (k, a) <- zip [0 ..] as, k /= i])
+            refreshAccounts list accounts
+  where
+    clear = do
+        child <- Gtk.widgetGetFirstChild list
+        forM_ child $ \c -> Gtk.boxRemove list c >> clear
 
 -- Widget lists --------------------------------------------------------------
 

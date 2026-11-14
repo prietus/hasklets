@@ -16,6 +16,8 @@ compositor with wlr-layer-shell; made to go with
   play-pause / next buttons for any MPRIS player, over D-Bus
 * **Disks**: used and total space of every real filesystem
 * **Processes**: the ones using the most CPU, with their memory
+* **Calendar**: the events of the next two weeks from iCloud, Google, any
+  CalDAV server or an iCal address
 * five themes: dark, light, Nord, Gruvbox and a translucent glass look
 * configured with a JSON file that is reloaded when it changes, or from a
   settings window (right-click any widget)
@@ -31,7 +33,7 @@ cabal install --installdir ~/.local/bin
 ```
 
 The first build compiles the GTK bindings and takes a while. `curl` is used
-at run time for the weather and for cover art served over HTTP.
+at run time for the weather, the calendars and cover art served over HTTP.
 
 Start it from your rivermonad config:
 
@@ -67,7 +69,7 @@ configuration is kept.
 | `corner` | `"top-left"` | or `"top-right"`, `"bottom-left"`, `"bottom-right"` |
 | `margin` | `24` | distance from the screen edges, in logical pixels |
 | `gap` | `14` | space between widgets |
-| `columns` | see above | columns from left to right, each a list of `weather`, `system`, `mpris`, `disks`, `processes`; a widget that is not listed is hidden |
+| `columns` | see above | columns from left to right, each a list of `weather`, `system`, `mpris`, `disks`, `processes`, `calendar`; a widget that is not listed is hidden |
 | `weather.name` | `"Tomares"` | title of the weather widget |
 | `weather.latitude`, `weather.longitude` | `37.38`, `-6.05` | forecast location; sent to api.open-meteo.com |
 | `processes.rows` | `5` | processes shown, 1 to 10 |
@@ -90,11 +92,39 @@ A theme is a record in `app/Theme.hs` with the colors, the corner radius,
 the font and the style of gauges and charts; adding one is adding a record
 to the `themes` list.
 
+### Calendar
+
+The calendar widget is hidden until it is added to a column. Its accounts
+are not in `config.json` but in `~/.config/hasklets/accounts.json`, a file
+only its owner can read, because they hold passwords; add them from the
+settings window, or by hand:
+
+```json
+{"calendars": [
+  {"provider": "icloud", "user": "me@icloud.com", "password": "abcd-efgh-ijkl-mnop"},
+  {"provider": "google", "user": "me@gmail.com", "password": "abcdefghijklmnop"},
+  {"provider": "caldav", "url": "https://cloud.example.org/remote.php/dav/", "user": "me", "password": "..."},
+  {"provider": "ics", "url": "https://example.org/calendar.ics"}
+]}
+```
+
+| `provider` | |
+|---|---|
+| `icloud` | every calendar of the account, with an [app-specific password](https://support.apple.com/102654) |
+| `google` | the main calendar of the account, with an [app password](https://support.google.com/accounts/answer/185833); if Google rejects it, use the calendar's "secret address in iCal format" as an `ics` account |
+| `caldav` | every calendar of an account on any CalDAV server (Nextcloud, Fastmail, Radicale...) |
+| `ics` | a read-only iCal address; no user or password |
+
+Passwords reach `curl` through its standard input, never on its command
+line. Events are fetched every ten minutes. Repeating events are expanded
+for daily, weekly, monthly and yearly rules; the rarer parts of a rule
+(`BYMONTHDAY`, `BYSETPOS`...) are ignored.
+
 ### Settings window
 
 `hasklets --config`, or a right-click on any widget, opens a window that
 edits the same file: move widgets between columns or hide them, choose the
-theme, the corner and the spacing, look up the coordinates of a place by name (through
+theme, the corner and the spacing, add calendar accounts, look up the coordinates of a place by name (through
 Open-Meteo's geocoding service) and set the number of processes. *Apply*
 saves, and the running widgets pick the change up.
 

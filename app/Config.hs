@@ -28,7 +28,7 @@ import System.FilePath (takeDirectory, (</>))
 import Theme
 import Weather (Place (..))
 
-data WidgetKind = WeatherW | SystemW | MprisW | DisksW | ProcessesW
+data WidgetKind = WeatherW | SystemW | MprisW | DisksW | ProcessesW | CalendarW
     deriving (Eq, Enum, Bounded)
 
 -- | Name in the JSON file.
@@ -39,6 +39,7 @@ widgetId k = case k of
     MprisW -> "mpris"
     DisksW -> "disks"
     ProcessesW -> "processes"
+    CalendarW -> "calendar"
 
 -- | Name in the settings window.
 widgetLabel :: WidgetKind -> Text
@@ -48,6 +49,7 @@ widgetLabel k = case k of
     MprisW -> "Media player"
     DisksW -> "Disks"
     ProcessesW -> "Processes"
+    CalendarW -> "Calendar"
 
 -- | Screen corner the widgets are placed in.
 data Corner = TopLeft | TopRight | BottomLeft | BottomRight

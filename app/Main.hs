@@ -23,8 +23,11 @@ import System.Directory (doesFileExist)
 import System.Environment (getArgs, getExecutablePath)
 import System.Exit (exitFailure)
 import System.IO (hPutStrLn, stderr)
+import Data.Time (getZonedTime, zonedTimeToLocalTime)
 import System.Process (spawnProcess, waitForProcess)
 
+import Accounts (accountsPath)
+import Calendar
 import Config
 import Disks
 import Draw
@@ -124,6 +127,7 @@ data Shared = Shared
     , shNow :: IORef (Maybe Now)
     , shDisks :: IORef [Disk]
     , shProcs :: IORef [Proc]
+    , shAgenda :: IORef Agenda
     }
 
 newShared :: IO Shared
@@ -142,6 +146,7 @@ newShared = do
         <*> newIORef Nothing
         <*> newIORef []
         <*> newIORef []
+        <*> newIORef emptyAgenda
 
 -- Window --------------------------------------------------------------------
 
@@ -185,13 +190,13 @@ activate app = do
     teardown <- newIORef =<< build win layered shared initial
 
     -- When the file changes, everything is torn down and built again.
-    let reload = do
+    let reload force = do
             result <- loadConfig
             case result of
                 Left err -> hPutStrLn stderr ("hasklets: " <> path <> ": " <> err <> "; keeping the previous configuration")
                 Right cfg -> do
                     old <- readIORef current
-                    when (cfg /= old) $ do
+                    when (force || cfg /= old) $ do
                         join (readIORef teardown)
                         writeIORef current cfg
                         build win layered shared cfg >>= writeIORef teardown
@@ -203,15 +208,27 @@ activate app = do
         mine <- atomicModifyIORef' pending (\n -> (n + 1, n + 1))
         void . GLib.timeoutAdd GLib.PRIORITY_DEFAULT 200 $ do
             latest <- readIORef pending
-            when (mine == latest) reload
+            when (mine == latest) (reload False)
+            pure False
+
+    -- The calendar accounts live in their own file; a change there restarts
+    -- the widgets so the calendar is fetched again.
+    accountsFile <- Gio.fileNewForPath =<< accountsPath
+    accountsMonitor <- Gio.fileMonitorFile accountsFile [] (Nothing :: Maybe Gio.Cancellable)
+    void $ Gio.onFileMonitorChanged accountsMonitor $ \_ _ _ -> do
+        mine <- atomicModifyIORef' pending (\n -> (n + 1, n + 1))
+        void . GLib.timeoutAdd GLib.PRIORITY_DEFAULT 200 $ do
+            latest <- readIORef pending
+            when (mine == latest) (reload True)
             pure False
 
     -- CPU, memory and network are always sampled, to keep the history.
     void . GLib.timeoutAdd GLib.PRIORITY_DEFAULT (fromIntegral intervalMs) $ do
         readIORef (shSystem shared) >>= sample >>= writeIORef (shSystem shared)
         join (readIORef (shSystemRedraw shared))
-        -- Keeps the file monitor alive for as long as the program runs.
+        -- Keeps the file monitors alive for as long as the program runs.
         touchManagedPtr monitor
+        touchManagedPtr accountsMonitor
         pure True
 
 -- | Builds the widgets for a configuration. Returns the action that tears
@@ -292,6 +309,14 @@ addWidget sh cfg threads box kind = case kind of
         area <- canvas box (processesSize rows) (renderProcesses th rows . take rows <$> readIORef (shProcs sh))
         background . processLoop rows $ \ps -> do
             writeIORef (shProcs sh) ps
+            redrawLater area
+    CalendarW -> do
+        let draw = do
+                now <- zonedTimeToLocalTime <$> getZonedTime
+                renderCalendar th now <$> readIORef (shAgenda sh)
+        area <- canvas box calendarSize draw
+        background . calendarLoop $ \agenda -> do
+            writeIORef (shAgenda sh) agenda
             redrawLater area
   where
     th = cfgTheme cfg
