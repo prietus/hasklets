@@ -15,7 +15,6 @@ optdepends=('curl: weather, calendars and cover art served over HTTP')
 # gi-gtk4-layer-shell). So the Haskell libraries come from Hackage and are
 # linked statically (ghc-static); only the C libraries are shared.
 makedepends=('ghc' 'ghc-static' 'cabal-install' 'gobject-introspection')
-# After tagging v$pkgver: updpkgsums.
 source=("$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz")
 sha256sums=('SKIP')
 
@@ -23,20 +22,19 @@ prepare() {
   cd $pkgname-$pkgver
   export CABAL_DIR="$srcdir/cabal"
   cabal update
-  # Download here, so that build() works without the network.
   cabal build --only-download
 }
 
 build() {
   cd $pkgname-$pkgver
   export CABAL_DIR="$srcdir/cabal"
-  cabal build --offline --ghc-option=-optl-Wl\,-z\,relro\,-z\,now
+  cabal build --ghc-option=-optl-Wl\,-z\,relro\,-z\,now
 }
 
 package() {
   cd $pkgname-$pkgver
   export CABAL_DIR="$srcdir/cabal"
-  install -Dm755 "$(cabal list-bin --offline exe:hasklets)" "$pkgdir/usr/bin/hasklets"
+  install -Dm755 "$(cabal list-bin exe:hasklets)" "$pkgdir/usr/bin/hasklets"
   install -Dm644 README.md -t "$pkgdir/usr/share/doc/$pkgname"
   install -Dm644 LICENSE -t "$pkgdir/usr/share/licenses/$pkgname"
 }
