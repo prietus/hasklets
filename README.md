@@ -14,7 +14,10 @@ compositor with wlr-layer-shell; made to go with
   download history, read from `/proc`
 * **Media player**: cover art, title, artist, progress and previous /
   play-pause / next buttons for any MPRIS player, over D-Bus
-* **Disks**: used and total space of every real filesystem
+* **Disks**: a ring for the disk your home directory is on, split into the
+  four folders or files that take the most space in it (measured with `du`
+  every ten minutes), and a bar with the used and total space of every
+  other real filesystem
 * **Processes**: the ones using the most CPU, with their memory
 * **Calendar**: the events of the next two weeks from iCloud, Google, any
   CalDAV server or an iCal address

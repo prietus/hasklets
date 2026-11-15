@@ -297,13 +297,13 @@ addWidget sh cfg threads box kind = case kind of
                 _ -> pure ()
         Gtk.widgetAddController area click
     DisksW -> do
-        -- The card height follows the number of disks.
-        known <- length <$> readIORef (shDisks sh)
+        -- The card height follows the disks there are.
+        known <- readIORef (shDisks sh)
         area <- canvas box (disksSize known) (renderDisks th <$> readIORef (shDisks sh))
         background . disksLoop $ \ds -> do
             writeIORef (shDisks sh) ds
             void . GLib.idleAdd GLib.PRIORITY_DEFAULT $ do
-                Gtk.drawingAreaSetContentHeight area (round (k * snd (disksSize (length ds))))
+                Gtk.drawingAreaSetContentHeight area (round (k * snd (disksSize ds)))
                 Gtk.widgetQueueDraw area
                 pure False
     ProcessesW -> do
