@@ -7,6 +7,7 @@ module Calendar
     , emptyAgenda
     , calendarLoop
     , calendarSize
+    , calendarLines
     , renderCalendar
     ) where
 
@@ -333,45 +334,55 @@ resolve local today calendarColor raw = do
 
 -- Drawing -------------------------------------------------------------------
 
--- | Lines of text under the title.
+-- | At most this many lines of text under the title.
 maxLines :: Int
 maxLines = 8
 
 lineH :: Double
 lineH = 22
 
-calendarSize :: (Double, Double)
-calendarSize = (300, 50 + lineH * fromIntegral maxLines)
+-- | The card is as tall as the lines it has to show (see 'calendarLines').
+calendarSize :: Int -> (Double, Double)
+calendarSize n = (300, 50 + lineH * fromIntegral (max 1 n))
 
 data Row = DayLine String | EventLine Event | Note String | Problem Text
+
+-- | How many lines the agenda takes at this time.
+calendarLines :: LocalTime -> Agenda -> Int
+calendarLines now = length . rows now
+
+-- The lines under the title: the upcoming events grouped by day, or a note
+-- when there is nothing to list. Events that are over are left out.
+rows :: LocalTime -> Agenda -> [Row]
+rows now agenda = take (maxLines - length problems) content <> problems
+  where
+    today = localDay now
+    upcoming = sortOn evStart [e | e <- agEvents agenda, evEnd e > now || (evEnd e == evStart e && evStart e >= now)]
+    -- An event that started on an earlier day is listed under today.
+    dayOf e = max today (localDay (evStart e))
+    label day
+        | day == today = "Today"
+        | day == addDays 1 today = "Tomorrow"
+        | otherwise = formatTime defaultTimeLocale "%a %-e %b" day
+    grouped = concat [DayLine (label day) : map EventLine (filter ((== day) . dayOf) upcoming) | day <- nub (map dayOf upcoming)]
+    problems = map Problem (take 1 (agErrors agenda))
+    content
+        | not (agLoaded agenda) = [Note "Loading…"]
+        | not (agConfigured agenda) = [Note "No calendars yet", Note "Right-click to add an account"]
+        | null upcoming && null problems = [Note "No upcoming events"]
+        | otherwise = grouped
 
 -- | @now@ is the current local time: events that are over are not shown.
 renderCalendar :: Theme -> LocalTime -> Agenda -> Render ()
 renderCalendar th now agenda = do
-    let (w, h) = calendarSize
+    let ls = rows now agenda
+        (w, h) = calendarSize (length ls)
         pad = 18
-        today = localDay now
     card th (Rect 0.5 0.5 (w - 1) (h - 1))
     font th FontWeightNormal 12
     dim th
     moveTo pad 30
-    showText (formatTime defaultTimeLocale "%A, %-e %B" today)
-
-    let upcoming = sortOn evStart [e | e <- agEvents agenda, evEnd e > now || (evEnd e == evStart e && evStart e >= now)]
-        -- An event that started on an earlier day is listed under today.
-        dayOf e = max today (localDay (evStart e))
-        label day
-            | day == today = "Today"
-            | day == addDays 1 today = "Tomorrow"
-            | otherwise = formatTime defaultTimeLocale "%a %-e %b" day
-        grouped = concat [DayLine (label day) : map EventLine (filter ((== day) . dayOf) upcoming) | day <- nub (map dayOf upcoming)]
-        problems = map Problem (take 1 (agErrors agenda))
-        content
-            | not (agLoaded agenda) = [Note "Loading…"]
-            | not (agConfigured agenda) = [Note "No calendars yet", Note "Right-click to add an account"]
-            | null upcoming && null problems = [Note "No upcoming events"]
-            | otherwise = grouped
-        ls = take (maxLines - length problems) content <> problems
+    showText (formatTime defaultTimeLocale "%A, %-e %B" (localDay now))
     forM_ (zip [0 :: Int ..] ls) $ \(i, l) -> do
         let y = 44 + lineH * fromIntegral i
         case l of

@@ -316,10 +316,17 @@ addWidget sh cfg threads box kind = case kind of
         let draw = do
                 now <- zonedTimeToLocalTime <$> getZonedTime
                 renderCalendar th now <$> readIORef (shAgenda sh)
-        area <- canvas box calendarSize draw
+            localNow = zonedTimeToLocalTime <$> getZonedTime
+        -- The card height follows the events there are to show.
+        known <- calendarLines <$> localNow <*> readIORef (shAgenda sh)
+        area <- canvas box (calendarSize known) draw
         background . calendarLoop $ \agenda -> do
             writeIORef (shAgenda sh) agenda
-            redrawLater area
+            void . GLib.idleAdd GLib.PRIORITY_DEFAULT $ do
+                n <- (`calendarLines` agenda) <$> localNow
+                Gtk.drawingAreaSetContentHeight area (round (k * snd (calendarSize n)))
+                Gtk.widgetQueueDraw area
+                pure False
   where
     th = cfgTheme cfg
     k = cfgScale cfg
