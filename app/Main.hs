@@ -119,8 +119,8 @@ renderSystem th st = do
 -- blank.
 data Shared = Shared
     { shWeather :: IORef (Maybe Weather)
-    , shWeatherPlace :: IORef (Maybe Place)
-    -- ^ Location 'shWeather' belongs to.
+    , shWeatherPlace :: IORef (Maybe (Source, Place))
+    -- ^ Source and location 'shWeather' belongs to.
     , shSystem :: IORef State
     , shSystemRedraw :: IORef (IO ())
     -- ^ Redraws the system card, if it is visible.
@@ -274,11 +274,12 @@ addWidget :: Shared -> Config -> IORef [ThreadId] -> Gtk.Box -> WidgetKind -> IO
 addWidget sh cfg threads box kind = case kind of
     WeatherW -> do
         let place = cfgPlace cfg
+            source = cfgWeatherSource cfg
         previous <- readIORef (shWeatherPlace sh)
-        when (previous /= Just place) $ writeIORef (shWeather sh) Nothing
-        writeIORef (shWeatherPlace sh) (Just place)
+        when (previous /= Just (source, place)) $ writeIORef (shWeather sh) Nothing
+        writeIORef (shWeatherPlace sh) (Just (source, place))
         area <- canvas box weatherSize (renderWeather th place <$> readIORef (shWeather sh))
-        background . weatherLoop place $ \w -> do
+        background . weatherLoop source place $ \w -> do
             writeIORef (shWeather sh) (Just w)
             redrawLater area
     SystemW -> do

@@ -9,7 +9,8 @@ compositor with wlr-layer-shell; made to go with
 ![hasklets on a rivermonad desktop: weather, CPU, memory and network, media player, disks and top processes](docs/desktop.png)
 
 * **Weather**: current conditions, high and low, and the next six hours,
-  from [Open-Meteo](https://open-meteo.com) (no API key)
+  from [Open-Meteo](https://open-meteo.com) (no API key) or from your own
+  wtr server (Apple's WeatherKit)
 * **CPU, memory and network**: two ring gauges and a minute of upload and
   download history, read from `/proc`
 * **Media player**: cover art, title, artist, progress and previous /
@@ -62,7 +63,7 @@ configuration is kept.
   "margin": 24,
   "gap": 14,
   "columns": [["weather","system","mpris"],["disks","processes"]],
-  "weather": {"latitude":40.42,"longitude":-3.70,"name":"Madrid"},
+  "weather": {"latitude":40.42,"longitude":-3.70,"name":"Madrid","provider":"open-meteo"},
   "processes": {"rows":5}
 }
 ```
@@ -76,7 +77,8 @@ configuration is kept.
 | `gap` | `14` | space between widgets |
 | `columns` | see above | columns from left to right, each a list of `weather`, `system`, `mpris`, `disks`, `processes`, `calendar`; a widget that is not listed is hidden |
 | `weather.name` | `"Madrid"` | title of the weather widget |
-| `weather.latitude`, `weather.longitude` | `40.42`, `-3.70` | forecast location; sent to api.open-meteo.com |
+| `weather.latitude`, `weather.longitude` | `40.42`, `-3.70` | forecast location; sent to the weather provider |
+| `weather.provider` | `"open-meteo"` | or `"wtr"`: a wtr server (WeatherKit) at `weather.url`, with the token of `~/.config/wtr/api_token`; it has no hourly forecast, so the widget shows the next six days instead of the next six hours |
 | `processes.rows` | `5` | processes shown, 1 to 10 |
 
 Missing fields take their default.

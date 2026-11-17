@@ -1,8 +1,10 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Weather widget with data from Open-Meteo (https://open-meteo.com, no API key).
+-- | Weather widget, with data from Open-Meteo (https://open-meteo.com, no API
+-- key) or from a wtr server (Apple's WeatherKit).
 module Weather
     ( Place (..)
+    , Source (..)
     , Weather
     , weatherLoop
     , geocode
@@ -19,8 +21,11 @@ import Data.List (zip4)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
+import Data.Time (UTCTime, defaultTimeLocale, formatTime, getTimeZone, utcToLocalTime)
 import GI.Cairo.Render
+import System.Directory (getHomeDirectory)
 import System.Exit (ExitCode (..))
+import System.FilePath ((</>))
 import System.IO (hPutStrLn, stderr)
 import System.Process (readProcessWithExitCode)
 import Text.Printf (printf)
@@ -35,6 +40,14 @@ data Place = Place
     }
     deriving (Eq)
 
+-- | Where the forecast comes from.
+data Source
+    = OpenMeteo
+    | -- | A wtr server at this address. Its token is read from
+      -- @~/.config/wtr/api_token@, the file the wtr client uses.
+      Wtr Text
+    deriving (Eq)
+
 data Weather = Weather
     { wTemp :: Double
     , wCode :: Int
@@ -42,6 +55,8 @@ data Weather = Weather
     , wMax :: Double
     , wMin :: Double
     , wHours :: [Hour]
+    -- ^ The strip at the bottom: the next hours, or the next days when the
+    -- source has no hourly forecast.
     }
 
 data Hour = Hour
@@ -55,9 +70,9 @@ data Hour = Hour
 
 -- | Fetches the forecast every 15 minutes (retrying after a minute on failure)
 -- and hands it to @publish@. Meant to run on its own thread.
-weatherLoop :: Place -> (Weather -> IO ()) -> IO ()
-weatherLoop place publish = forever $ do
-    result <- try (fetch place)
+weatherLoop :: Source -> Place -> (Weather -> IO ()) -> IO ()
+weatherLoop source place publish = forever $ do
+    result <- try (fetch source place)
     case result of
         Right (Right w) -> publish w >> threadDelay (15 * minute)
         Right (Left err) -> failed err
@@ -68,8 +83,31 @@ weatherLoop place publish = forever $ do
         hPutStrLn stderr ("hasklets: weather: " <> err)
         threadDelay minute
 
-fetch :: Place -> IO (Either String Weather)
-fetch place = do
+fetch :: Source -> Place -> IO (Either String Weather)
+fetch (Wtr base) place = do
+    home <- getHomeDirectory
+    let tokenFile = home </> ".config" </> "wtr" </> "api_token"
+    token <- try (readFile tokenFile)
+    case token of
+        Left e -> pure (Left ("no wtr token: " <> show (e :: IOException)))
+        Right contents -> do
+            -- The token goes to curl through its standard input, not its command line.
+            let url = T.unpack (T.dropWhileEnd (== '/') base) <> printf "/%.4f,%.4f?format=json" (placeLat place) (placeLon place)
+                config = "url = \"" <> url <> "\"\nheader = \"Authorization: Bearer " <> takeWhile (/= '\n') contents <> "\"\n"
+            (code, out, err) <- readProcessWithExitCode "curl" ["-fsS", "--max-time", "15", "-K", "-"] config
+            case code of
+                ExitFailure _ -> pure (Left (takeWhile (/= '\n') err))
+                ExitSuccess -> case eitherDecodeStrict (TE.encodeUtf8 (T.pack out)) >>= parseEither wtrForecast of
+                    Left problem -> pure (Left problem)
+                    Right (weather, days) -> do
+                        -- Each day is labelled with its week day here, in local time.
+                        slots <- mapM daySlot (take 6 days)
+                        pure (Right weather{wHours = slots})
+  where
+    daySlot (at, sky', top) = do
+        zone <- getTimeZone at
+        pure (Hour (formatTime defaultTimeLocale "%a" (utcToLocalTime zone at)) sky' True top)
+fetch OpenMeteo place = do
     (code, out, err) <- readProcessWithExitCode "curl" ["-fsS", "--max-time", "15", url] ""
     pure $ case code of
         ExitSuccess -> eitherDecodeStrict (TE.encodeUtf8 (T.pack out)) >>= parseEither forecast
@@ -151,6 +189,40 @@ forecast = withObject "forecast" $ \o -> do
                             ]
                     }
         _ -> fail "no daily data"
+
+-- | The answer of a wtr server: the weather now and today, and the days
+-- after today (when each starts, its sky and its high). It has no hourly
+-- forecast.
+wtrForecast :: Value -> Parser (Weather, [(UTCTime, Int, Double)])
+wtrForecast = withObject "forecast" $ \o -> do
+    current <- o .: "current"
+    temp <- current .: "temp_c"
+    condition <- current .: "condition_code"
+    daylight <- current .: "daylight"
+    daily <- o .: "daily"
+    days <- mapM day daily
+    case days of
+        ((_, _, hi, lo) : later) ->
+            pure (Weather temp (weatherKitCode condition) daylight hi lo [], [(at, c, top) | (at, c, top, _) <- later])
+        [] -> fail "no daily data"
+  where
+    day = withObject "day" $ \d ->
+        (,,,) <$> d .: "date" <*> (weatherKitCode <$> d .: "condition_code") <*> d .: "temp_max_c" <*> d .: "temp_min_c"
+
+-- | A WeatherKit condition as the nearest WMO code.
+weatherKitCode :: Text -> Int
+weatherKitCode c
+    | c `elem` ["Clear", "Hot", "Frigid"] = 0
+    | c == "MostlyClear" = 1
+    | c == "PartlyCloudy" = 2
+    | c `elem` ["Foggy", "Haze", "Smoky", "BlowingDust"] = 45
+    | c `elem` ["Drizzle", "FreezingDrizzle"] = 53
+    | c `elem` ["Rain", "HeavyRain", "FreezingRain", "Sleet", "WintryMix"] = 63
+    | c == "SunShowers" = 80
+    | c `elem` ["Flurries", "SunFlurries", "Snow", "BlowingSnow", "HeavySnow", "Blizzard"] = 73
+    | c `elem` ["Hail", "IsolatedThunderstorms", "ScatteredThunderstorms", "Thunderstorms", "StrongStorms", "TropicalStorm", "Hurricane"] = 95
+    -- MostlyCloudy, Cloudy, Breezy, Windy, and anything unknown.
+    | otherwise = 3
 
 -- WMO codes -----------------------------------------------------------------
 

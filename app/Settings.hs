@@ -21,7 +21,7 @@ import GI.Pango qualified as Pango
 import Accounts
 import Config
 import Theme
-import Weather (Place (..), geocode)
+import Weather (Place (..), Source (..), geocode)
 
 runSettings :: IO ()
 runSettings = do
@@ -99,6 +99,14 @@ settingsWindow app = do
     gridRow wgrid 1 "Latitude" lat
     lon <- spin (-180) 180 0.01 4 (placeLon (cfgPlace cfg))
     gridRow wgrid 2 "Longitude" lon
+    provider' <- Gtk.dropDownNewFromStrings ["Open-Meteo", "wtr server (Apple WeatherKit)"]
+    gridRow wgrid 3 "Source" provider'
+    server <- Gtk.entryNew
+    Gtk.entrySetPlaceholderText server (Just "Only for wtr; its token is read from ~/.config/wtr/api_token")
+    gridRow wgrid 4 "Server address" server
+    case cfgWeatherSource cfg of
+        OpenMeteo -> Gtk.dropDownSetSelected provider' 0
+        Wtr address' -> Gtk.dropDownSetSelected provider' 1 >> Gtk.editableSetText server address'
     found <- note root ""
     void $ Gtk.onButtonClicked search $ do
         query <- Gtk.editableGetText name
@@ -197,6 +205,8 @@ settingsWindow app = do
         latV <- Gtk.spinButtonGetValue lat
         lonV <- Gtk.spinButtonGetValue lon
         rowsV <- Gtk.spinButtonGetValue rows
+        sourceIx <- Gtk.dropDownGetSelected provider'
+        serverV <- T.strip <$> Gtk.editableGetText server
         let new =
                 Config
                     { cfgTheme = themes !! min (length themes - 1) (fromIntegral themeIx)
@@ -206,6 +216,7 @@ settingsWindow app = do
                     , cfgScale = sizeV
                     , -- The last list holds the hidden widgets.
                       cfgColumns = filter (not . null) (init groups)
+                    , cfgWeatherSource = if sourceIx == 1 then Wtr serverV else OpenMeteo
                     , cfgPlace = Place (T.unpack (T.strip nameV)) latV lonV
                     , cfgProcessRows = round rowsV
                     }

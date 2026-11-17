@@ -26,7 +26,7 @@ import System.Directory
 import System.FilePath (takeDirectory, (</>))
 
 import Theme
-import Weather (Place (..))
+import Weather (Place (..), Source (..))
 
 data WidgetKind = WeatherW | SystemW | MprisW | DisksW | ProcessesW | CalendarW
     deriving (Eq, Enum, Bounded)
@@ -80,6 +80,7 @@ data Config = Config
     -- ^ Space between widgets.
     , cfgColumns :: [[WidgetKind]]
     -- ^ Columns from left to right; widgets not listed are hidden.
+    , cfgWeatherSource :: Source
     , cfgPlace :: Place
     -- ^ Forecast location. Its coordinates are sent to api.open-meteo.com.
     , cfgProcessRows :: Int
@@ -89,7 +90,7 @@ data Config = Config
 instance Eq Config where
     a == b = key a == key b
       where
-        key c = (themeId (cfgTheme c), cfgScale c, cfgCorner c, cfgMargin c, cfgGap c, cfgColumns c, cfgPlace c, cfgProcessRows c)
+        key c = (themeId (cfgTheme c), cfgScale c, cfgCorner c, cfgMargin c, cfgGap c, cfgColumns c, cfgWeatherSource c, cfgPlace c, cfgProcessRows c)
 
 defaultConfig :: Config
 defaultConfig =
@@ -100,6 +101,7 @@ defaultConfig =
         , cfgMargin = 24
         , cfgGap = 14
         , cfgColumns = [[WeatherW, SystemW, MprisW], [DisksW, ProcessesW]]
+        , cfgWeatherSource = OpenMeteo
         , cfgPlace = Place{placeName = "Madrid", placeLat = 40.42, placeLon = -3.70}
         , cfgProcessRows = 5
         }
@@ -117,6 +119,12 @@ instance FromJSON Config where
         name <- weather .:? "name" .!= placeName (cfgPlace d)
         lat <- weather .:? "latitude" .!= placeLat (cfgPlace d)
         lon <- weather .:? "longitude" .!= placeLon (cfgPlace d)
+        provider <- weather .:? "provider" .!= "open-meteo"
+        address <- weather .:? "url" .!= ""
+        source <- case provider :: Text of
+            "open-meteo" -> pure OpenMeteo
+            "wtr" -> pure (Wtr address)
+            other -> fail ("unknown weather provider: " <> T.unpack other <> " (available: open-meteo, wtr)")
         processes <- o .:? "processes" .!= mempty
         rows <- processes .:? "rows" .!= cfgProcessRows d
         pure
@@ -127,6 +135,7 @@ instance FromJSON Config where
                 , cfgMargin = clamp 0 500 margin
                 , cfgGap = clamp 0 200 gap
                 , cfgColumns = columns
+                , cfgWeatherSource = source
                 , cfgPlace = Place name (clamp (-90) 90 lat) (clamp (-180) 180 lon)
                 , cfgProcessRows = clamp 1 10 rows
                 }
@@ -168,7 +177,11 @@ encodeConfig cfg = "{\n" <> BL.intercalate ",\n" (map field fields) <> "\n}\n"
         , ("columns", toJSON (map (map widgetId) (cfgColumns cfg)))
         ,
             ( "weather"
-            , object ["name" .= placeName place, "latitude" .= placeLat place, "longitude" .= placeLon place]
+            , object $
+                ["name" .= placeName place, "latitude" .= placeLat place, "longitude" .= placeLon place]
+                    <> case cfgWeatherSource cfg of
+                        OpenMeteo -> ["provider" .= ("open-meteo" :: Text)]
+                        Wtr address -> ["provider" .= ("wtr" :: Text), "url" .= address]
             )
         , ("processes", object ["rows" .= cfgProcessRows cfg])
         ]
