@@ -138,6 +138,8 @@ widgets, so they are easy to line up. The place is saved in `positions`; the
 settings window has a button that puts every dragged widget back in its
 column. This needs a compositor with layer-shell.
 
+![Widgets being dragged around the desktop and sticking to each other's sides](docs/drag.gif)
+
 ### Settings window
 
 `hasklets --config`, or a right-click on any widget, opens a window that
