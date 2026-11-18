@@ -121,6 +121,10 @@ data Shared = Shared
     { shWeather :: IORef (Maybe Weather)
     , shWeatherPlace :: IORef (Maybe (Source, Place))
     -- ^ Source and location 'shWeather' belongs to.
+    , shWeatherRedraw :: IORef (IO ())
+    -- ^ Redraws the cards that show the weather.
+    , shWeatherRunning :: IORef Bool
+    -- ^ Whether the forecast is already being fetched for the cards there are.
     , shSystem :: IORef State
     , shSystemRedraw :: IORef (IO ())
     -- ^ Redraws the system card, if it is visible.
@@ -141,6 +145,8 @@ newShared = do
     Shared
         <$> newIORef Nothing
         <*> newIORef Nothing
+        <*> newIORef (pure ())
+        <*> newIORef False
         <*> newIORef (State raw0 0 mem0 Seq.empty Seq.empty)
         <*> newIORef (pure ())
         <*> pure bus
@@ -268,20 +274,14 @@ build win layered sh cfg = do
         -- killThread waits for the thread to get the signal; don't block GTK on it.
         readIORef threads >>= mapM_ (forkIO . killThread)
         writeIORef (shSystemRedraw sh) (pure ())
+        writeIORef (shWeatherRedraw sh) (pure ())
+        writeIORef (shWeatherRunning sh) False
         Gtk.windowSetChild win (Nothing :: Maybe Gtk.Widget)
 
 addWidget :: Shared -> Config -> IORef [ThreadId] -> Gtk.Box -> WidgetKind -> IO ()
 addWidget sh cfg threads box kind = case kind of
-    WeatherW -> do
-        let place = cfgPlace cfg
-            source = cfgWeatherSource cfg
-        previous <- readIORef (shWeatherPlace sh)
-        when (previous /= Just (source, place)) $ writeIORef (shWeather sh) Nothing
-        writeIORef (shWeatherPlace sh) (Just (source, place))
-        area <- canvas box weatherSize (renderWeather th place <$> readIORef (shWeather sh))
-        background . weatherLoop source place $ \w -> do
-            writeIORef (shWeather sh) (Just w)
-            redrawLater area
+    WeatherW -> weatherCard weatherSize (renderWeather th (cfgPlace cfg))
+    ForecastW -> weatherCard forecastSize (renderForecast th (cfgPlace cfg))
     SystemW -> do
         area <- canvas box (cardSize, cardSize) (renderSystem th <$> readIORef (shSystem sh))
         writeIORef (shSystemRedraw sh) (Gtk.widgetQueueDraw area)
@@ -333,6 +333,19 @@ addWidget sh cfg threads box kind = case kind of
     k = cfgScale cfg
     canvas = scaledCanvas k
     background io = forkIO io >>= \t -> modifyIORef threads (t :)
+    -- A card painted from the forecast, which is fetched once for all of them.
+    weatherCard size draw = do
+        let place = cfgPlace cfg
+            source = cfgWeatherSource cfg
+        previous <- readIORef (shWeatherPlace sh)
+        when (previous /= Just (source, place)) $ writeIORef (shWeather sh) Nothing
+        writeIORef (shWeatherPlace sh) (Just (source, place))
+        area <- canvas box size (draw <$> readIORef (shWeather sh))
+        modifyIORef (shWeatherRedraw sh) (>> redrawLater area)
+        running <- atomicModifyIORef' (shWeatherRunning sh) (True,)
+        unless running . background . weatherLoop source place $ \w -> do
+            writeIORef (shWeather sh) (Just w)
+            join (readIORef (shWeatherRedraw sh))
 
 -- | Adds to the column a canvas of the given size, painted with @draw@ and
 -- enlarged by the factor @k@ (drawing code always works at the normal size).

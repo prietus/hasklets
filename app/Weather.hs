@@ -10,18 +10,20 @@ module Weather
     , geocode
     , weatherSize
     , renderWeather
+    , forecastSize
+    , renderForecast
     ) where
 
 import Control.Concurrent (threadDelay)
 import Control.Exception (IOException, try)
-import Control.Monad (forM_, forever)
+import Control.Monad (forM_, forever, unless, when)
 import Data.Aeson
 import Data.Aeson.Types (Parser, parseEither)
 import Data.List (zip4)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
-import Data.Time (UTCTime, defaultTimeLocale, formatTime, getTimeZone, utcToLocalTime)
+import Data.Time (Day, UTCTime, defaultTimeLocale, formatTime, getTimeZone, localTimeOfDay, parseTimeM, todHour, utcToLocalTime)
 import GI.Cairo.Render
 import System.Directory (getHomeDirectory)
 import System.Exit (ExitCode (..))
@@ -29,6 +31,7 @@ import System.FilePath ((</>))
 import System.IO (hPutStrLn, stderr)
 import System.Process (readProcessWithExitCode)
 import Text.Printf (printf)
+import Text.Read (readMaybe)
 
 import Draw
 import Theme
@@ -57,6 +60,17 @@ data Weather = Weather
     , wHours :: [Hour]
     -- ^ The strip at the bottom: the next hours, or the next days when the
     -- source has no hourly forecast.
+    , wDays :: [DayAhead]
+    -- ^ Today and the days after it.
+    , wCurve :: [(Int, Double)]
+    -- ^ The next 24 hours: hour of the day and temperature.
+    }
+
+data DayAhead = DayAhead
+    { dLabel :: String
+    , dCode :: Int
+    , dMax :: Double
+    , dMin :: Double
     }
 
 data Hour = Hour
@@ -91,22 +105,40 @@ fetch (Wtr base) place = do
     case token of
         Left e -> pure (Left ("no wtr token: " <> show (e :: IOException)))
         Right contents -> do
-            -- The token goes to curl through its standard input, not its command line.
-            let url = T.unpack (T.dropWhileEnd (== '/') base) <> printf "/%.4f,%.4f?format=json" (placeLat place) (placeLon place)
-                config = "url = \"" <> url <> "\"\nheader = \"Authorization: Bearer " <> takeWhile (/= '\n') contents <> "\"\n"
-            (code, out, err) <- readProcessWithExitCode "curl" ["-fsS", "--max-time", "15", "-K", "-"] config
-            case code of
-                ExitFailure _ -> pure (Left (takeWhile (/= '\n') err))
-                ExitSuccess -> case eitherDecodeStrict (TE.encodeUtf8 (T.pack out)) >>= parseEither wtrForecast of
-                    Left problem -> pure (Left problem)
-                    Right (weather, days) -> do
-                        -- Each day is labelled with its week day here, in local time.
-                        slots <- mapM daySlot (take 6 days)
-                        pure (Right weather{wHours = slots})
+            answer <- get contents "" wtrForecast
+            case answer of
+                Left problem -> pure (Left problem)
+                Right (weather, days) -> do
+                    -- The hours come from a second request; without them only the curve is missing.
+                    hourly <- get contents "&view=hourly" wtrHours
+                    hours <- case hourly of
+                        Right hs -> pure hs
+                        Left problem -> [] <$ hPutStrLn stderr ("hasklets: weather: hourly: " <> problem)
+                    -- Days and hours are labelled here, in local time.
+                    slots <- mapM daySlot days
+                    curve <- mapM hourSlot (take 24 hours)
+                    pure . Right $
+                        weather
+                            { wHours = [Hour (dLabel d) (dCode d) True (dMax d) | d <- take 6 (drop 1 slots)]
+                            , wDays = slots
+                            , wCurve = curve
+                            }
   where
-    daySlot (at, sky', top) = do
+    get :: String -> String -> (Value -> Parser a) -> IO (Either String a)
+    get token query parser = do
+        -- The token goes to curl through its standard input, not its command line.
+        let url = T.unpack (T.dropWhileEnd (== '/') base) <> printf "/%.4f,%.4f?format=json" (placeLat place) (placeLon place) <> query
+            config = "url = \"" <> url <> "\"\nheader = \"Authorization: Bearer " <> takeWhile (/= '\n') token <> "\"\n"
+        (code, out, err) <- readProcessWithExitCode "curl" ["-fsS", "--max-time", "15", "-K", "-"] config
+        pure $ case code of
+            ExitFailure _ -> Left (takeWhile (/= '\n') err)
+            ExitSuccess -> eitherDecodeStrict (TE.encodeUtf8 (T.pack out)) >>= parseEither parser
+    daySlot (at, sky', top, low) = do
         zone <- getTimeZone at
-        pure (Hour (formatTime defaultTimeLocale "%a" (utcToLocalTime zone at)) sky' True top)
+        pure (DayAhead (formatTime defaultTimeLocale "%a" (utcToLocalTime zone at)) sky' top low)
+    hourSlot (at, temp) = do
+        zone <- getTimeZone at
+        pure (todHour (localTimeOfDay (utcToLocalTime zone at)), temp)
 fetch OpenMeteo place = do
     (code, out, err) <- readProcessWithExitCode "curl" ["-fsS", "--max-time", "15", url] ""
     pure $ case code of
@@ -118,8 +150,8 @@ fetch OpenMeteo place = do
             "https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f\
             \&current=temperature_2m,weather_code,is_day\
             \&hourly=temperature_2m,weather_code,is_day\
-            \&daily=temperature_2m_max,temperature_2m_min\
-            \&timezone=auto&forecast_days=2"
+            \&daily=weather_code,temperature_2m_max,temperature_2m_min\
+            \&timezone=auto&forecast_days=7"
             (placeLat place)
             (placeLon place)
 
@@ -169,8 +201,16 @@ forecast = withObject "forecast" $ \o -> do
     codes <- hourly .: "weather_code"
     days <- hourly .: "is_day" :: Parser [Int]
     daily <- o .: "daily"
+    dates <- daily .: "time" :: Parser [Text]
+    dayCodes <- daily .: "weather_code"
     maxs <- daily .: "temperature_2m_max"
     mins <- daily .: "temperature_2m_min"
+    -- ISO times ("2026-11-14T13:00") compare correctly as text.
+    let upcoming = [h | h@(t, _, _, _) <- zip4 times temps codes days, t > now]
+        hourOf t = maybe 0 (`mod` 24) (readMaybe (T.unpack (T.take 2 (T.drop 11 t))))
+        weekday t = case parseTimeM True defaultTimeLocale "%Y-%m-%d" (T.unpack t) :: Maybe Day of
+            Just d -> formatTime defaultTimeLocale "%a" d
+            Nothing -> T.unpack t
     case (maxs, mins) of
         (hi : _, lo : _) ->
             pure
@@ -180,20 +220,16 @@ forecast = withObject "forecast" $ \o -> do
                     , wIsDay = isDay /= 0
                     , wMax = hi
                     , wMin = lo
-                    , -- ISO times ("2026-11-14T13:00") compare correctly as text.
-                      wHours =
-                        take 6
-                            [ Hour (T.unpack (T.take 2 (T.drop 11 t))) c (d /= 0) tp
-                            | (t, tp, c, d) <- zip4 times temps codes days
-                            , t > now
-                            ]
+                    , wHours = [Hour (T.unpack (T.take 2 (T.drop 11 t))) c (d /= 0) tp | (t, tp, c, d) <- take 6 upcoming]
+                    , wDays = [DayAhead (weekday d) c top low | (d, c, top, low) <- zip4 dates dayCodes maxs mins]
+                    , wCurve = [(hourOf t, tp) | (t, tp, _, _) <- take 24 upcoming]
                     }
         _ -> fail "no daily data"
 
--- | The answer of a wtr server: the weather now and today, and the days
--- after today (when each starts, its sky and its high). It has no hourly
--- forecast.
-wtrForecast :: Value -> Parser (Weather, [(UTCTime, Int, Double)])
+-- | The answer of a wtr server: the weather now and today, and every day
+-- from today on (when it starts, its sky, its high and its low). It has no
+-- hourly forecast.
+wtrForecast :: Value -> Parser (Weather, [(UTCTime, Int, Double, Double)])
 wtrForecast = withObject "forecast" $ \o -> do
     current <- o .: "current"
     temp <- current .: "temp_c"
@@ -202,12 +238,16 @@ wtrForecast = withObject "forecast" $ \o -> do
     daily <- o .: "daily"
     days <- mapM day daily
     case days of
-        ((_, _, hi, lo) : later) ->
-            pure (Weather temp (weatherKitCode condition) daylight hi lo [], [(at, c, top) | (at, c, top, _) <- later])
+        ((_, _, hi, lo) : _) -> pure (Weather temp (weatherKitCode condition) daylight hi lo [] [] [], days)
         [] -> fail "no daily data"
   where
     day = withObject "day" $ \d ->
         (,,,) <$> d .: "date" <*> (weatherKitCode <$> d .: "condition_code") <*> d .: "temp_max_c" <*> d .: "temp_min_c"
+
+-- | The hourly view of a wtr server: when each hour starts and its temperature.
+wtrHours :: Value -> Parser [(UTCTime, Double)]
+wtrHours = withObject "hourly" $ \o ->
+    o .: "hours" >>= mapM (withObject "hour" (\h -> (,) <$> h .: "time" <*> h .: "temp_c"))
 
 -- | A WeatherKit condition as the nearest WMO code.
 weatherKitCode :: Text -> Int
@@ -264,27 +304,13 @@ renderWeather th place mw = do
     let (w, h) = weatherSize
         pad = 16
     card th (Rect 0.5 0.5 (w - 1) (h - 1))
-    ink th
-    font th FontWeightBold 14
-    moveTo pad 27
-    showText (placeName place)
+    now th place mw w pad
     case mw of
         Nothing -> do
             font th FontWeightNormal 12
             dim th
             centered (w / 2) (h / 2 + 16) "Loading…"
         Just wx -> do
-            font th FontWeightNormal 38
-            ink th
-            moveTo (pad - 2) 66
-            showText (degrees (wTemp wx))
-
-            icon th (sky (wCode wx)) (wIsDay wx) (w - pad - 11) 21 24
-            font th FontWeightNormal 12
-            ink th
-            rightAligned (w - pad) 50 (describe (wCode wx))
-            rightAligned (w - pad) 66 (printf "H: %s  L: %s" (degrees (wMax wx)) (degrees (wMin wx)))
-
             let hours = wHours wx
                 colW = (w - 2 * pad) / fromIntegral (max 1 (length hours))
             forM_ (zip [0 :: Int ..] hours) $ \(i, hr) -> do
@@ -296,6 +322,115 @@ renderWeather th place mw = do
                 font th FontWeightBold 12
                 ink th
                 centered cx 136 (degrees (hTemp hr))
+
+-- | The top of a weather card, in a card @w@ wide: the place and, once
+-- known, the weather now with today's high and low.
+now :: Theme -> Place -> Maybe Weather -> Double -> Double -> Render ()
+now th place mw w pad = do
+    ink th
+    font th FontWeightBold 14
+    moveTo pad 27
+    showText (placeName place)
+    forM_ mw $ \wx -> do
+        font th FontWeightNormal 38
+        ink th
+        moveTo (pad - 2) 66
+        showText (degrees (wTemp wx))
+
+        icon th (sky (wCode wx)) (wIsDay wx) (w - pad - 11) 21 24
+        font th FontWeightNormal 12
+        ink th
+        rightAligned (w - pad) 50 (describe (wCode wx))
+        rightAligned (w - pad) 66 (printf "H: %s  L: %s" (degrees (wMax wx)) (degrees (wMin wx)))
+
+-- | The weather now, the days ahead and the temperature of the next 24 hours.
+forecastSize :: (Double, Double)
+forecastSize = (300, 314)
+
+renderForecast :: Theme -> Place -> Maybe Weather -> Render ()
+renderForecast th place mw = do
+    let (w, h) = forecastSize
+        pad = 16
+    card th (Rect 0.5 0.5 (w - 1) (h - 1))
+    now th place mw w pad
+    font th FontWeightNormal 12
+    dim th
+    case mw of
+        Nothing -> centered (w / 2) (h / 2 + 16) "Loading…"
+        Just wx -> do
+            divider th (pad, 81) (w - pad, 81)
+            -- The rest is laid out from below the weather now.
+            translate 0 74
+            font th FontWeightNormal 12
+            dim th
+            moveTo pad 27
+            let days = wDays wx
+                colW = (w - 2 * pad) / fromIntegral (max 1 (length days))
+            showText (printf "%d-day forecast" (length days) :: String)
+            forM_ (zip [0 :: Int ..] days) $ \(i, d) -> do
+                let cx = pad + colW * (fromIntegral i + 0.5)
+                font th FontWeightNormal 11
+                dim th
+                centered cx 50 (dLabel d)
+                icon th (sky (dCode d)) True cx 67 22
+                font th FontWeightBold 12
+                ink th
+                centered cx 95 (degrees (dMax d))
+                font th FontWeightNormal 11
+                dim th
+                centered cx 109 (degrees (dMin d))
+            divider th (pad, 121) (w - pad, 121)
+            font th FontWeightNormal 12
+            dim th
+            moveTo pad 141
+            showText ("Next 24 hours" :: String)
+            temperatureCurve th (Rect pad 164 (w - 2 * pad) 50) (wCurve wx)
+
+-- | The temperatures as an area chart, with the highest one labelled and
+-- the hour marked every six.
+temperatureCurve :: Theme -> Rect -> [(Int, Double)] -> Render ()
+temperatureCurve th (Rect x y w h) points = unless (length points < 2) $ do
+    let temps = map snd points
+        hi = maximum temps
+        lo = minimum temps
+        bottom = y + h
+        px i = x + w * fromIntegral i / fromIntegral (length points - 1)
+        -- The lowest temperature still stands a bit above the base line.
+        py t = bottom - h * (0.15 + 0.85 * (t - lo) / max 1 (hi - lo))
+        pts = zip (map px [0 :: Int ..]) (map py temps)
+        accent@(cr, cg, cb) = accentColor th
+        within a = max (x + a) . min (x + w - a)
+    newPath
+    moveTo x bottom
+    forM_ pts (uncurry lineTo)
+    lineTo (x + w) bottom
+    closePath
+    withLinearPattern 0 y 0 bottom $ \pat -> do
+        patternAddColorStopRGBA pat 0 cr cg cb 0.35
+        patternAddColorStopRGBA pat 1 cr cg cb 0.04
+        setSource pat
+        fill
+    newPath
+    forM_ (zip [0 :: Int ..] pts) $ \(i, (a, b)) ->
+        if i == 0 then moveTo a b else lineTo a b
+    rgba accent 1
+    setLineWidth 1.6
+    setLineJoin LineJoinRound
+    setLineCap LineCapRound
+    stroke
+    divider th (x, bottom + 0.5) (x + w, bottom + 0.5)
+
+    forM_ (take 1 [p | (p, t) <- zip pts temps, t == hi]) $ \(a, b) -> do
+        rgba accent 1
+        newPath
+        arc a b 2.6 0 (2 * pi)
+        fill
+        font th FontWeightBold 11
+        centered (within 10 a) (b - 7) (degrees hi)
+    font th FontWeightNormal 10
+    dim th
+    forM_ (zip [0 :: Int ..] points) $ \(i, (hour, _)) ->
+        when (hour `mod` 6 == 0) $ centered (within 7 (px i)) (bottom + 14) (printf "%02d" hour)
 
 degrees :: Double -> String
 degrees t = show (round t :: Int) <> "°"

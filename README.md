@@ -11,6 +11,8 @@ compositor with wlr-layer-shell; made to go with
 * **Weather**: current conditions, high and low, and the next six hours,
   from [Open-Meteo](https://open-meteo.com) (no API key) or from your own
   wtr server (Apple's WeatherKit)
+* **Weather, with forecast** (`forecast`, hidden by default): the same, plus
+  the week ahead and the temperature of the next 24 hours as a curve
 * **CPU, memory and network**: two ring gauges and a minute of upload and
   download history, read from `/proc`
 * **Media player**: cover art, title, artist, progress and previous /
@@ -75,7 +77,7 @@ configuration is kept.
 | `corner` | `"top-left"` | or `"top-right"`, `"bottom-left"`, `"bottom-right"` |
 | `margin` | `24` | distance from the screen edges, in logical pixels |
 | `gap` | `14` | space between widgets |
-| `columns` | see above | columns from left to right, each a list of `weather`, `system`, `mpris`, `disks`, `processes`, `calendar`; a widget that is not listed is hidden |
+| `columns` | see above | columns from left to right, each a list of `weather`, `forecast`, `system`, `mpris`, `disks`, `processes`, `calendar`; a widget that is not listed is hidden |
 | `weather.name` | `"Madrid"` | title of the weather widget |
 | `weather.latitude`, `weather.longitude` | `40.42`, `-3.70` | forecast location; sent to the weather provider |
 | `weather.provider` | `"open-meteo"` | or `"wtr"`: a wtr server (WeatherKit) at `weather.url`, with the token of `~/.config/wtr/api_token`; it has no hourly forecast, so the widget shows the next six days instead of the next six hours |

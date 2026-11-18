@@ -28,13 +28,14 @@ import System.FilePath (takeDirectory, (</>))
 import Theme
 import Weather (Place (..), Source (..))
 
-data WidgetKind = WeatherW | SystemW | MprisW | DisksW | ProcessesW | CalendarW
+data WidgetKind = WeatherW | ForecastW | SystemW | MprisW | DisksW | ProcessesW | CalendarW
     deriving (Eq, Enum, Bounded)
 
 -- | Name in the JSON file.
 widgetId :: WidgetKind -> Text
 widgetId k = case k of
     WeatherW -> "weather"
+    ForecastW -> "forecast"
     SystemW -> "system"
     MprisW -> "mpris"
     DisksW -> "disks"
@@ -44,7 +45,8 @@ widgetId k = case k of
 -- | Name in the settings window.
 widgetLabel :: WidgetKind -> Text
 widgetLabel k = case k of
-    WeatherW -> "Weather"
+    WeatherW -> "Weather, compact"
+    ForecastW -> "Weather, with forecast"
     SystemW -> "CPU, memory and network"
     MprisW -> "Media player"
     DisksW -> "Disks"
