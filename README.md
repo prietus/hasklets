@@ -6,7 +6,7 @@ compositor with wlr-layer-shell; made to go with
 [rivermonad](https://github.com/prietus/rivermonad) and
 [waymobar](https://github.com/prietus/waymobar).
 
-![hasklets on a rivermonad desktop: weather, CPU, memory and network, media player, disks and top processes](docs/desktop.png)
+![hasklets on a rivermonad desktop: weather with forecast, CPU, memory and network, disks, top processes, calendar and media player, dragged around and sticking to each other's sides](docs/drag.gif)
 
 * **Weather**: current conditions, high and low, and the next six hours,
   from [Open-Meteo](https://open-meteo.com) (no API key) or from your own
@@ -137,8 +137,6 @@ leaves its column, and on the way it sticks to the sides of the other
 widgets, so they are easy to line up. The place is saved in `positions`; the
 settings window has a button that puts every dragged widget back in its
 column. This needs a compositor with layer-shell.
-
-![Widgets being dragged around the desktop and sticking to each other's sides](docs/drag.gif)
 
 ### Settings window
 
