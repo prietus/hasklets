@@ -51,6 +51,7 @@ executable hasklets
                     , gi-gio
                     , gi-gobject
                     , gi-gdk4
+                    , gi-graphene
                     , gi-gdkpixbuf
                     , gi-gtk4
                     , gi-gtk4-layer-shell

@@ -8,16 +8,20 @@
 module Main (main) where
 
 import Control.Concurrent (ThreadId, forkIO, killThread)
-import Control.Monad (forM_, join, unless, void, when)
+import Control.Monad (forM, forM_, join, unless, void, when)
+import Data.List (sortOn)
+import Data.Maybe (isJust, isNothing)
 import Data.GI.Base (touchManagedPtr)
 import Data.IORef
 import Data.Sequence (Seq, (|>))
 import Data.Sequence qualified as Seq
+import GI.Cairo qualified as GICairo
 import GI.Cairo.Render (Render)
 import GI.Cairo.Render qualified as Cairo
 import GI.Cairo.Render.Connector (renderWithContext)
 import GI.GLib qualified as GLib
 import GI.Gio qualified as Gio
+import GI.Graphene qualified as Graphene
 import GI.Gtk qualified as Gtk
 import GI.Gtk4LayerShell qualified as LS
 import System.Directory (doesFileExist)
@@ -194,7 +198,7 @@ activate app = do
             hPutStrLn stderr ("hasklets: " <> path <> ": " <> err <> "; using the default configuration")
             pure defaultConfig
     current <- newIORef initial
-    teardown <- newIORef =<< build win layered shared initial
+    teardown <- newIORef =<< build app win layered shared current initial
 
     -- When the file changes, everything is torn down and built again.
     let reload force = do
@@ -206,7 +210,7 @@ activate app = do
                     when (force || cfg /= old) $ do
                         join (readIORef teardown)
                         writeIORef current cfg
-                        build win layered shared cfg >>= writeIORef teardown
+                        build app win layered shared current cfg >>= writeIORef teardown
     file <- Gio.fileNewForPath path
     monitor <- Gio.fileMonitorFile file [] (Nothing :: Maybe Gio.Cancellable)
     -- One save triggers several events in a row: wait until they stop.
@@ -240,13 +244,13 @@ activate app = do
 
 -- | Builds the widgets for a configuration. Returns the action that tears
 -- them down and stops their threads.
-build :: Gtk.ApplicationWindow -> Bool -> Shared -> Config -> IO (IO ())
-build win layered sh cfg = do
-    let (vertical, horizontal) = case cfgCorner cfg of
-            TopLeft -> (LS.EdgeTop, LS.EdgeLeft)
-            TopRight -> (LS.EdgeTop, LS.EdgeRight)
-            BottomLeft -> (LS.EdgeBottom, LS.EdgeLeft)
-            BottomRight -> (LS.EdgeBottom, LS.EdgeRight)
+build :: Gtk.Application -> Gtk.ApplicationWindow -> Bool -> Shared -> IORef Config -> Config -> IO (IO ())
+build app win layered sh current cfg = do
+    let (vertical, horizontal) = cornerEdges (cfgCorner cfg)
+        -- Widgets dragged out of their column get a window of their own.
+        -- That needs layer-shell: without it, they all stay in the columns.
+        free = [(kind, at) | layered, kind <- concat (cfgColumns cfg), Just at <- [lookup kind (cfgPositions cfg)]]
+        inColumns = filter (not . null) (map (filter (`notElem` map fst free)) (cfgColumns cfg))
         valign = if vertical == LS.EdgeTop then Gtk.AlignStart else Gtk.AlignEnd
         -- The space between widgets grows with them.
         gap = round (fromIntegral (cfgGap cfg) * cfgScale cfg)
@@ -259,18 +263,39 @@ build win layered sh cfg = do
     columns <- Gtk.boxNew Gtk.OrientationHorizontal gap
     Gtk.windowSetChild win (Just columns)
     threads <- newIORef []
-    forM_ (filter (not . null) (cfgColumns cfg)) $ \kinds -> do
+    desk <- Desk app layered <$> newIORef [] <*> newIORef [] <*> newIORef (const (pure ()))
+    let margin = fromIntegral (cfgMargin cfg)
+    cols <- forM inColumns $ \kinds -> do
         col <- Gtk.boxNew Gtk.OrientationVertical gap
         Gtk.widgetSetValign col valign
         Gtk.boxAppend columns col
-        forM_ kinds (addWidget sh cfg threads col)
+        forM_ kinds (addWidget sh cfg desk (Host win (margin, margin) False) threads col)
+        pure col
+    -- When a card is dragged out of its column: the configuration in use
+    -- now has it placed, and a column or a window left empty is hidden.
+    writeIORef (dkLeft desk) $ \positions -> do
+        modifyIORef current (\c -> c{cfgPositions = positions})
+        empty <- forM cols (fmap isNothing . Gtk.widgetGetFirstChild)
+        forM_ (zip cols empty) $ \(col, none) -> when none (Gtk.widgetSetVisible col False)
+        when (and empty) (Gtk.widgetSetVisible win False)
 
     -- With no widgets there is nothing to show.
-    if any (not . null) (cfgColumns cfg)
-        then Gtk.windowPresent win
-        else Gtk.widgetSetVisible win False
+    if null inColumns
+        then Gtk.widgetSetVisible win False
+        else Gtk.windowPresent win
+
+    forM_ free $ \(kind, at@(x, y)) -> do
+        own <- floating app (cfgCorner cfg) LS.LayerBottom at
+        box <- Gtk.boxNew Gtk.OrientationVertical 0
+        Gtk.windowSetChild own (Just box)
+        addWidget sh cfg desk (Host own (fromIntegral x, fromIntegral y) True) threads box kind
+        modifyIORef (dkWindows desk) (own :)
+        -- A widget that cannot be shown (no media player bus) adds nothing.
+        filled <- isJust <$> Gtk.widgetGetFirstChild box
+        when filled (Gtk.windowPresent own)
 
     pure $ do
+        readIORef (dkWindows desk) >>= mapM_ Gtk.windowDestroy
         -- killThread waits for the thread to get the signal; don't block GTK on it.
         readIORef threads >>= mapM_ (forkIO . killThread)
         writeIORef (shSystemRedraw sh) (pure ())
@@ -278,8 +303,8 @@ build win layered sh cfg = do
         writeIORef (shWeatherRunning sh) False
         Gtk.windowSetChild win (Nothing :: Maybe Gtk.Widget)
 
-addWidget :: Shared -> Config -> IORef [ThreadId] -> Gtk.Box -> WidgetKind -> IO ()
-addWidget sh cfg threads box kind = case kind of
+addWidget :: Shared -> Config -> Desk -> Host -> IORef [ThreadId] -> Gtk.Box -> WidgetKind -> IO ()
+addWidget sh cfg desk host threads box kind = case kind of
     WeatherW -> weatherCard weatherSize (renderWeather th (cfgPlace cfg))
     ForecastW -> weatherCard forecastSize (renderForecast th (cfgPlace cfg))
     SystemW -> do
@@ -331,7 +356,7 @@ addWidget sh cfg threads box kind = case kind of
   where
     th = cfgTheme cfg
     k = cfgScale cfg
-    canvas = scaledCanvas k
+    canvas = scaledCanvas desk host cfg kind
     background io = forkIO io >>= \t -> modifyIORef threads (t :)
     -- A card painted from the forecast, which is fetched once for all of them.
     weatherCard size draw = do
@@ -348,22 +373,186 @@ addWidget sh cfg threads box kind = case kind of
             join (readIORef (shWeatherRedraw sh))
 
 -- | Adds to the column a canvas of the given size, painted with @draw@ and
--- enlarged by the factor @k@ (drawing code always works at the normal size).
--- Right-clicking any widget opens the settings window.
-scaledCanvas :: Double -> Gtk.Box -> (Double, Double) -> IO (Render ()) -> IO Gtk.DrawingArea
-scaledCanvas k box (w, h) draw = do
+-- enlarged by the configured scale (drawing code always works at the normal
+-- size). Right-clicking any widget opens the settings window, and dragging
+-- it moves it somewhere else.
+scaledCanvas :: Desk -> Host -> Config -> WidgetKind -> Gtk.Box -> (Double, Double) -> IO (Render ()) -> IO Gtk.DrawingArea
+scaledCanvas desk host cfg kind box (w, h) draw = do
+    let k = cfgScale cfg
+        paint ctx = do
+            r <- draw
+            renderWithContext (Cairo.scale k k >> r) ctx
     area <- Gtk.drawingAreaNew
     Gtk.drawingAreaSetContentWidth area (round (k * w))
     Gtk.drawingAreaSetContentHeight area (round (k * h))
+    -- While the card is dragged, only its copy is painted.
+    shown <- newIORef True
     Gtk.drawingAreaSetDrawFunc area . Just $ \_ ctx _ _ -> do
-        r <- draw
-        renderWithContext (Cairo.scale k k >> r) ctx
+        visible <- readIORef shown
+        when visible (paint ctx)
+    let display visible = writeIORef shown visible >> Gtk.widgetQueueDraw area
+    -- The window the card is in changes when it is dragged.
+    home <- newIORef host
+    modifyIORef (dkCards desk) ((kind, spot cfg home area) :)
+    when (dkLayered desk) (draggable desk home cfg kind area paint display)
     secondary <- Gtk.gestureClickNew
     Gtk.gestureSingleSetButton secondary 3
     void $ Gtk.onGestureClickPressed secondary $ \_ _ _ -> openSettings
     Gtk.widgetAddController area secondary
     Gtk.boxAppend box area
     pure area
+
+-- Dragging -----------------------------------------------------------------
+
+-- | A window of widgets, how far it is from the two edges of the corner,
+-- and whether it holds a single card placed by hand.
+data Host = Host Gtk.ApplicationWindow (Double, Double) Bool
+
+-- | What the widgets of one configuration share to be dragged around.
+data Desk = Desk
+    { dkApp :: Gtk.Application
+    , dkLayered :: Bool
+    , dkCards :: IORef [(WidgetKind, IO Spot)]
+    -- ^ Where each card is right now.
+    , dkWindows :: IORef [Gtk.ApplicationWindow]
+    -- ^ The windows besides the main one, closed with the configuration.
+    , dkLeft :: IORef ([(WidgetKind, (Int, Int))] -> IO ())
+    -- ^ Told the new positions when a card has been dropped.
+    }
+
+-- | A card on the screen: its distance from the two edges of the corner
+-- (so it grows away from the corner), its width and its height.
+type Spot = (Double, Double, Double, Double)
+
+-- | The vertical and the horizontal edge of a corner.
+cornerEdges :: Corner -> (LS.Edge, LS.Edge)
+cornerEdges corner = case corner of
+    TopLeft -> (LS.EdgeTop, LS.EdgeLeft)
+    TopRight -> (LS.EdgeTop, LS.EdgeRight)
+    BottomLeft -> (LS.EdgeBottom, LS.EdgeLeft)
+    BottomRight -> (LS.EdgeBottom, LS.EdgeRight)
+
+-- | A layer-shell window of its own, at the given distance from the corner.
+floating :: Gtk.Application -> Corner -> LS.Layer -> (Int, Int) -> IO Gtk.ApplicationWindow
+floating app corner layer (x, y) = do
+    own <- Gtk.applicationWindowNew app
+    LS.initForWindow own
+    LS.setNamespace own (Just "hasklets")
+    LS.setLayer own layer
+    LS.setKeyboardMode own LS.KeyboardModeNone
+    Gtk.widgetAddCssClass own "hasklets"
+    let (vertical, horizontal) = cornerEdges corner
+    forM_ [vertical, horizontal] $ \edge -> LS.setAnchor own edge True
+    LS.setMargin own horizontal (fromIntegral x)
+    LS.setMargin own vertical (fromIntegral y)
+    pure own
+
+spot :: Config -> IORef Host -> Gtk.DrawingArea -> IO Spot
+spot cfg home area = do
+    Host win (mx, my) _ <- readIORef home
+    origin <- Graphene.pointZero
+    (_, corner) <- Gtk.widgetComputePoint area win origin
+    x <- realToFrac <$> Graphene.getPointX corner
+    y <- realToFrac <$> Graphene.getPointY corner
+    w <- fromIntegral <$> Gtk.widgetGetWidth area
+    h <- fromIntegral <$> Gtk.widgetGetHeight area
+    wide <- fromIntegral <$> Gtk.widgetGetWidth win
+    tall <- fromIntegral <$> Gtk.widgetGetHeight win
+    let (vertical, horizontal) = cornerEdges (cfgCorner cfg)
+    pure
+        ( mx + (if horizontal == LS.EdgeLeft then x else wide - x - w)
+        , my + (if vertical == LS.EdgeTop then y else tall - y - h)
+        , w
+        , h
+        )
+
+{- | Lets a card be dragged with the left button. The card itself stays where
+it is, invisible: what follows the pointer is a copy in a window of its own,
+which keeps the pointer coordinates steady. On dropping it the card moves
+into that window, which becomes its own, and its position is saved.
+-}
+draggable :: Desk -> IORef Host -> Config -> WidgetKind -> Gtk.DrawingArea -> (GICairo.Context -> IO ()) -> (Bool -> IO ()) -> IO ()
+draggable desk home cfg kind area paint display = do
+    drag <- Gtk.gestureDragNew
+    moving <- newIORef Nothing
+    let corner = cfgCorner cfg
+        (vertical, horizontal) = cornerEdges corner
+        -- Distances grow away from the corner.
+        away edge near = if edge == near then 1 else -1
+        gap = fromIntegral (cfgGap cfg) * cfgScale cfg
+        margin = fromIntegral (cfgMargin cfg)
+        begin = do
+            (x0, y0, w, h) <- spot cfg home area
+            others <- readIORef (dkCards desk) >>= mapM snd . filter ((/= kind) . fst)
+            let start = (round x0, round y0) :: (Int, Int)
+                -- Next to another card, or lined up with one of its sides.
+                stops from size = margin : concat [[a, a + s - size, a + s + gap, a - gap - size] | o <- others, let (a, s) = from o]
+                xs = stops (\(a, _, s, _) -> (a, s)) w
+                ys = stops (\(_, a, _, s) -> (a, s)) h
+            copy <- Gtk.drawingAreaNew
+            Gtk.drawingAreaSetContentWidth copy (round w)
+            Gtk.drawingAreaSetContentHeight copy (round h)
+            Gtk.drawingAreaSetDrawFunc copy (Just (\_ ctx _ _ -> paint ctx))
+            ghost <- floating (dkApp desk) corner LS.LayerTop start
+            box <- Gtk.boxNew Gtk.OrientationVertical 0
+            Gtk.boxAppend box copy
+            Gtk.windowSetChild ghost (Just box)
+            Gtk.windowPresent ghost
+            -- The card is hidden once its copy has had time to show up.
+            carried <- newIORef True
+            void . GLib.timeoutAdd GLib.PRIORITY_DEFAULT 80 $ do
+                still <- readIORef carried
+                when still (display False)
+                pure False
+            at <- newIORef start
+            let follow dx dy = do
+                    let to = (snapTo xs (x0 + away horizontal LS.EdgeLeft * dx), snapTo ys (y0 + away vertical LS.EdgeTop * dy))
+                    before <- readIORef at
+                    when (to /= before) $ do
+                        LS.setMargin ghost horizontal (fromIntegral (fst to))
+                        LS.setMargin ghost vertical (fromIntegral (snd to))
+                        writeIORef at to
+                release = writeIORef carried False >> display True
+                drop' = do
+                    to <- readIORef at
+                    onDisk <- loadConfig
+                    case onDisk of
+                        Right c | to /= start -> do
+                            -- The card takes the place of its copy, so nothing has to be rebuilt.
+                            Host old _ own <- readIORef home
+                            parent <- Gtk.widgetGetParent area
+                            forM_ parent $ \p -> Gtk.castTo Gtk.Box p >>= mapM_ (`Gtk.boxRemove` area)
+                            Gtk.boxRemove box copy
+                            Gtk.boxAppend box area
+                            release
+                            LS.setLayer ghost LS.LayerBottom
+                            writeIORef home (Host ghost (fromIntegral (fst to), fromIntegral (snd to)) True)
+                            modifyIORef (dkWindows desk) (ghost :)
+                            when own (Gtk.windowDestroy old)
+                            let positions = (kind, to) : filter ((/= kind) . fst) (cfgPositions c)
+                            readIORef (dkLeft desk) >>= ($ positions)
+                            saveConfig c{cfgPositions = positions}
+                        _ -> Gtk.windowDestroy ghost >> release
+            pure (follow, drop')
+    void $ Gtk.onGestureDragDragUpdate drag $ \dx dy -> do
+        current <- readIORef moving
+        case current of
+            Just (follow, _) -> follow dx dy
+            -- A click is not a drag: wait until the pointer has moved a bit.
+            Nothing -> when (abs dx + abs dy > 8) $ do
+                started@(follow, _) <- begin
+                writeIORef moving (Just started)
+                follow dx dy
+    void $ Gtk.onGestureDragDragEnd drag $ \_ _ -> do
+        current <- readIORef moving
+        writeIORef moving Nothing
+        forM_ current snd
+    Gtk.widgetAddController area drag
+  where
+    -- The nearest stop if it is close enough, and never past the edges.
+    snapTo stops v = case sortOn (abs . subtract v) (filter (>= 0) stops) of
+        (s : _) | abs (s - v) <= 12 -> round s
+        _ -> max 0 (round v) :: Int
 
 openSettings :: IO ()
 openSettings = do

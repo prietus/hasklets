@@ -78,6 +78,7 @@ configuration is kept.
 | `margin` | `24` | distance from the screen edges, in logical pixels |
 | `gap` | `14` | space between widgets |
 | `columns` | see above | columns from left to right, each a list of `weather`, `forecast`, `system`, `mpris`, `disks`, `processes`, `calendar`; a widget that is not listed is hidden |
+| `positions` | `{}` | widgets dragged out of their column, as `{"disks": [640, 300]}`: the distance from the two edges of the corner, in logical pixels |
 | `weather.name` | `"Madrid"` | title of the weather widget |
 | `weather.latitude`, `weather.longitude` | `40.42`, `-3.70` | forecast location; sent to the weather provider |
 | `weather.provider` | `"open-meteo"` | or `"wtr"`: a wtr server (WeatherKit) at `weather.url`, with the token of `~/.config/wtr/api_token`; it has no hourly forecast, so the widget shows the next six days instead of the next six hours |
@@ -128,6 +129,14 @@ Passwords reach `curl` through its standard input, never on its command
 line. Events are fetched every ten minutes. Repeating events are expanded
 for daily, weekly, monthly and yearly rules; the rarer parts of a rule
 (`BYMONTHDAY`, `BYSETPOS`...) are ignored.
+
+### Placing widgets by hand
+
+Drag a widget with the left button to put it anywhere on the screen. It
+leaves its column, and on the way it sticks to the sides of the other
+widgets, so they are easy to line up. The place is saved in `positions`; the
+settings window has a button that puts every dragged widget back in its
+column. This needs a compositor with layer-shell.
 
 ### Settings window
 

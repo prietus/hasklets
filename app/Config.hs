@@ -19,6 +19,7 @@ import Data.Aeson.Types (Parser)
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as BL
 import Data.List (find, nub)
+import Data.Map.Strict qualified as Map
 import Data.Maybe (mapMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -82,6 +83,9 @@ data Config = Config
     -- ^ Space between widgets.
     , cfgColumns :: [[WidgetKind]]
     -- ^ Columns from left to right; widgets not listed are hidden.
+    , cfgPositions :: [(WidgetKind, (Int, Int))]
+    -- ^ Widgets dragged out of their column: how far each one is from the
+    -- two edges of the corner, horizontally and vertically.
     , cfgWeatherSource :: Source
     , cfgPlace :: Place
     -- ^ Forecast location. Its coordinates are sent to api.open-meteo.com.
@@ -92,7 +96,9 @@ data Config = Config
 instance Eq Config where
     a == b = key a == key b
       where
-        key c = (themeId (cfgTheme c), cfgScale c, cfgCorner c, cfgMargin c, cfgGap c, cfgColumns c, cfgWeatherSource c, cfgPlace c, cfgProcessRows c)
+        -- In whatever order they were dragged.
+        positions c = Map.fromList [(widgetId k, at) | (k, at) <- cfgPositions c]
+        key c = (themeId (cfgTheme c), cfgScale c, cfgCorner c, cfgMargin c, cfgGap c, cfgColumns c, positions c, cfgWeatherSource c, cfgPlace c, cfgProcessRows c)
 
 defaultConfig :: Config
 defaultConfig =
@@ -103,6 +109,7 @@ defaultConfig =
         , cfgMargin = 24
         , cfgGap = 14
         , cfgColumns = [[WeatherW, SystemW, MprisW], [DisksW, ProcessesW]]
+        , cfgPositions = []
         , cfgWeatherSource = OpenMeteo
         , cfgPlace = Place{placeName = "Madrid", placeLat = 40.42, placeLon = -3.70}
         , cfgProcessRows = 5
@@ -117,6 +124,7 @@ instance FromJSON Config where
         margin <- o .:? "margin" .!= cfgMargin d
         gap <- o .:? "gap" .!= cfgGap d
         columns <- maybe (cfgColumns d) columnsFromIds <$> o .:? "columns"
+        positions <- o .:? "positions" .!= mempty
         weather <- o .:? "weather" .!= mempty
         name <- weather .:? "name" .!= placeName (cfgPlace d)
         lat <- weather .:? "latitude" .!= placeLat (cfgPlace d)
@@ -137,6 +145,11 @@ instance FromJSON Config where
                 , cfgMargin = clamp 0 500 margin
                 , cfgGap = clamp 0 200 gap
                 , cfgColumns = columns
+                , cfgPositions =
+                    [ (k, (clamp 0 20000 x, clamp 0 20000 y))
+                    | (name', (x, y)) <- Map.toList (positions :: Map.Map Text (Int, Int))
+                    , Just k <- [find ((== name') . widgetId) [minBound .. maxBound]]
+                    ]
                 , cfgWeatherSource = source
                 , cfgPlace = Place name (clamp (-90) 90 lat) (clamp (-180) 180 lon)
                 , cfgProcessRows = clamp 1 10 rows
@@ -177,6 +190,7 @@ encodeConfig cfg = "{\n" <> BL.intercalate ",\n" (map field fields) <> "\n}\n"
         , ("margin", toJSON (cfgMargin cfg))
         , ("gap", toJSON (cfgGap cfg))
         , ("columns", toJSON (map (map widgetId) (cfgColumns cfg)))
+        , ("positions", toJSON (Map.fromList [(widgetId k, [x, y]) | (k, (x, y)) <- cfgPositions cfg]))
         ,
             ( "weather"
             , object $

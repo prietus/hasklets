@@ -66,6 +66,16 @@ settingsWindow app = do
         hidden = filter (`notElem` concat shown) [minBound .. maxBound]
     layout <- newIORef (take (max 2 (length shown)) (shown <> repeat []) <> [hidden])
     refreshLists lists layout
+    back <- Gtk.buttonNewWithLabel "Put dragged widgets back in their columns"
+    Gtk.widgetSetHalign back Gtk.AlignStart
+    Gtk.boxAppend root back
+    dragNote <- note root "Drag a widget on the desktop to place it anywhere."
+    void $ Gtk.onButtonClicked back $ do
+        current <- loadConfig
+        result <- try (either (const (pure ())) (\c -> saveConfig c{cfgPositions = []}) current)
+        Gtk.labelSetText dragNote $ case result of
+            Left e -> "Could not save: " <> T.pack (show (e :: IOException))
+            Right () -> "Done."
 
     -- Appearance.
     heading root "Appearance"
@@ -207,6 +217,8 @@ settingsWindow app = do
         rowsV <- Gtk.spinButtonGetValue rows
         sourceIx <- Gtk.dropDownGetSelected provider'
         serverV <- T.strip <$> Gtk.editableGetText server
+        -- Widgets may have been dragged while this window was open.
+        onDisk <- loadConfig
         let new =
                 Config
                     { cfgTheme = themes !! min (length themes - 1) (fromIntegral themeIx)
@@ -216,6 +228,7 @@ settingsWindow app = do
                     , cfgScale = sizeV
                     , -- The last list holds the hidden widgets.
                       cfgColumns = filter (not . null) (init groups)
+                    , cfgPositions = cfgPositions (either (const cfg) id onDisk)
                     , cfgWeatherSource = if sourceIx == 1 then Wtr serverV else OpenMeteo
                     , cfgPlace = Place (T.unpack (T.strip nameV)) latV lonV
                     , cfgProcessRows = round rowsV
