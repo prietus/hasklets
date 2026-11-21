@@ -64,7 +64,18 @@ data Weather = Weather
     -- ^ Today and the days after it.
     , wCurve :: [(Int, Double)]
     -- ^ The next 24 hours: hour of the day and temperature.
+    , wAlerts :: [Alert]
+    -- ^ Severe weather warnings in force (only from wtr).
     }
+
+-- | A severe weather warning, on Meteoalarm's color scale.
+data Alert = Alert
+    { aLevel :: Maybe Level
+    , aDescription :: String
+    }
+
+data Level = Green | Yellow | Orange | Red
+    deriving (Eq, Ord)
 
 data DayAhead = DayAhead
     { dLabel :: String
@@ -82,17 +93,20 @@ data Hour = Hour
 
 -- Data ----------------------------------------------------------------------
 
--- | Fetches the forecast every 15 minutes (retrying after a minute on failure)
--- and hands it to @publish@. Meant to run on its own thread.
+-- | Fetches the forecast every 15 minutes, or every 5 from wtr to keep its
+-- warnings fresh (retrying after a minute on failure), and hands it to
+-- @publish@. Meant to run on its own thread.
 weatherLoop :: Source -> Place -> (Weather -> IO ()) -> IO ()
 weatherLoop source place publish = forever $ do
     result <- try (fetch source place)
     case result of
-        Right (Right w) -> publish w >> threadDelay (15 * minute)
+        Right (Right w) -> publish w >> threadDelay (every source)
         Right (Left err) -> failed err
         Left e -> failed (show (e :: IOException))
   where
     minute = 60 * 1000000
+    every (Wtr _) = 5 * minute
+    every OpenMeteo = 15 * minute
     failed err = do
         hPutStrLn stderr ("hasklets: weather: " <> err)
         threadDelay minute
@@ -114,6 +128,11 @@ fetch (Wtr base) place = do
                     hours <- case hourly of
                         Right hs -> pure hs
                         Left problem -> [] <$ hPutStrLn stderr ("hasklets: weather: hourly: " <> problem)
+                    -- So do the warnings; without them, none.
+                    warnings <- get contents "&view=alerts" wtrAlerts
+                    alerts <- case warnings of
+                        Right as -> pure as
+                        Left problem -> [] <$ hPutStrLn stderr ("hasklets: weather: alerts: " <> problem)
                     -- Days and hours are labelled here, in local time.
                     slots <- mapM daySlot days
                     curve <- mapM hourSlot (take 24 hours)
@@ -122,6 +141,7 @@ fetch (Wtr base) place = do
                             { wHours = [Hour (dLabel d) (dCode d) True (dMax d) | d <- take 6 (drop 1 slots)]
                             , wDays = slots
                             , wCurve = curve
+                            , wAlerts = alerts
                             }
   where
     get :: String -> String -> (Value -> Parser a) -> IO (Either String a)
@@ -223,6 +243,7 @@ forecast = withObject "forecast" $ \o -> do
                     , wHours = [Hour (T.unpack (T.take 2 (T.drop 11 t))) c (d /= 0) tp | (t, tp, c, d) <- take 6 upcoming]
                     , wDays = [DayAhead (weekday d) c top low | (d, c, top, low) <- zip4 dates dayCodes maxs mins]
                     , wCurve = [(hourOf t, tp) | (t, tp, _, _) <- take 24 upcoming]
+                    , wAlerts = []
                     }
         _ -> fail "no daily data"
 
@@ -238,7 +259,7 @@ wtrForecast = withObject "forecast" $ \o -> do
     daily <- o .: "daily"
     days <- mapM day daily
     case days of
-        ((_, _, hi, lo) : _) -> pure (Weather temp (weatherKitCode condition) daylight hi lo [] [] [], days)
+        ((_, _, hi, lo) : _) -> pure (Weather temp (weatherKitCode condition) daylight hi lo [] [] [] [], days)
         [] -> fail "no daily data"
   where
     day = withObject "day" $ \d ->
@@ -248,6 +269,48 @@ wtrForecast = withObject "forecast" $ \o -> do
 wtrHours :: Value -> Parser [(UTCTime, Double)]
 wtrHours = withObject "hourly" $ \o ->
     o .: "hours" >>= mapM (withObject "hour" (\h -> (,) <$> h .: "time" <*> h .: "temp_c"))
+
+-- | The warnings of a wtr server: @{"active": [{"level": "yellow", "description": "..."}]}@.
+wtrAlerts :: Value -> Parser [Alert]
+wtrAlerts = withObject "alerts" $ \o ->
+    o .: "active" >>= mapM (withObject "alert" (\a -> Alert <$> (level <$> a .:? "level") <*> a .: "description"))
+  where
+    level :: Maybe Text -> Maybe Level
+    level l = lookup (maybe "" id l) [("green", Green), ("yellow", Yellow), ("orange", Orange), ("red", Red)]
+
+-- | The worst warning, if any.
+worstAlert :: [Alert] -> Maybe Alert
+worstAlert [] = Nothing
+worstAlert as = Just (foldr1 (\a b -> if aLevel a >= aLevel b then a else b) as)
+
+-- | The color of a warning: yellow, orange (the theme's warning color) or red.
+alertColor :: Theme -> Alert -> RGB
+alertColor th a = case aLevel a of
+    Just Green -> okColor th
+    Just Yellow -> sunColor th
+    Just Orange -> warnColor th
+    Just Red -> critColor th
+    Nothing -> warnColor th
+
+-- | What a warning says: "⚠ Yellow · Thunderstorms", and how many more there are.
+alertText :: [Alert] -> Alert -> String
+alertText as a =
+    "⚠ " <> maybe "" ((<> " · ") . levelName) (aLevel a) <> aDescription a
+        <> (if length as > 1 then printf " (+%d)" (length as - 1) else "")
+  where
+    levelName l = case l of
+        Green -> "Green"
+        Yellow -> "Yellow"
+        Orange -> "Orange"
+        Red -> "Red"
+
+-- | The card's border again, thicker and in the color of the worst warning.
+alertBorder :: Theme -> (Double, Double) -> Maybe Weather -> Render ()
+alertBorder th (w, h) mw = forM_ (mw >>= worstAlert . wAlerts) $ \a -> do
+    roundRect (Rect 1 1 (w - 2) (h - 2)) (cardRadius th)
+    rgba (alertColor th a) 0.9
+    setLineWidth 2
+    stroke
 
 -- | A WeatherKit condition as the nearest WMO code.
 weatherKitCode :: Text -> Int
@@ -304,6 +367,7 @@ renderWeather th place mw = do
     let (w, h) = weatherSize
         pad = 16
     card th (Rect 0.5 0.5 (w - 1) (h - 1))
+    alertBorder th weatherSize mw
     now th place mw w pad
     case mw of
         Nothing -> do
@@ -331,6 +395,9 @@ now th place mw w pad = do
     font th FontWeightBold 14
     moveTo pad 27
     showText (placeName place)
+    forM_ (mw >>= worstAlert . wAlerts) $ \a -> do
+        rgba (alertColor th a) 1
+        showText (" ⚠" :: String)
     forM_ mw $ \wx -> do
         font th FontWeightNormal 38
         ink th
@@ -352,6 +419,7 @@ renderForecast th place mw = do
     let (w, h) = forecastSize
         pad = 16
     card th (Rect 0.5 0.5 (w - 1) (h - 1))
+    alertBorder th forecastSize mw
     now th place mw w pad
     font th FontWeightNormal 12
     dim th
@@ -366,7 +434,11 @@ renderForecast th place mw = do
             moveTo pad 27
             let days = wDays wx
                 colW = (w - 2 * pad) / fromIntegral (max 1 (length days))
-            showText (printf "%d-day forecast" (length days) :: String)
+            case worstAlert (wAlerts wx) of
+                Nothing -> showText (printf "%d-day forecast" (length days) :: String)
+                Just a -> do
+                    rgba (alertColor th a) 1
+                    pangoLine th pad 14 (w - 2 * pad) 12 True (T.pack (alertText (wAlerts wx) a))
             forM_ (zip [0 :: Int ..] days) $ \(i, d) -> do
                 let cx = pad + colW * (fromIntegral i + 0.5)
                 font th FontWeightNormal 11
