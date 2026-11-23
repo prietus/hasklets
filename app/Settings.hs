@@ -114,6 +114,10 @@ settingsWindow app = do
     server <- Gtk.entryNew
     Gtk.entrySetPlaceholderText server (Just "Only for wtr; its token is read from ~/.config/wtr/api_token")
     gridRow wgrid 4 "Server address" server
+    rain <- Gtk.switchNew
+    Gtk.switchSetActive rain (cfgRain cfg)
+    Gtk.widgetSetHalign rain Gtk.AlignStart
+    gridRow wgrid 5 "Falling rain while it rains" rain
     case cfgWeatherSource cfg of
         OpenMeteo -> Gtk.dropDownSetSelected provider' 0
         Wtr address' -> Gtk.dropDownSetSelected provider' 1 >> Gtk.editableSetText server address'
@@ -216,6 +220,7 @@ settingsWindow app = do
         lonV <- Gtk.spinButtonGetValue lon
         rowsV <- Gtk.spinButtonGetValue rows
         sourceIx <- Gtk.dropDownGetSelected provider'
+        rainV <- Gtk.switchGetActive rain
         serverV <- T.strip <$> Gtk.editableGetText server
         -- Widgets may have been dragged while this window was open.
         onDisk <- loadConfig
@@ -230,6 +235,7 @@ settingsWindow app = do
                       cfgColumns = filter (not . null) (init groups)
                     , cfgPositions = cfgPositions (either (const cfg) id onDisk)
                     , cfgWeatherSource = if sourceIx == 1 then Wtr serverV else OpenMeteo
+                    , cfgRain = rainV
                     , cfgPlace = Place (T.unpack (T.strip nameV)) latV lonV
                     , cfgProcessRows = round rowsV
                     }

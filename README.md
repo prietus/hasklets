@@ -82,6 +82,7 @@ configuration is kept.
 | `weather.name` | `"Madrid"` | title of the weather widget |
 | `weather.latitude`, `weather.longitude` | `40.42`, `-3.70` | forecast location; sent to the weather provider |
 | `weather.provider` | `"open-meteo"` | or `"wtr"`: a wtr server (WeatherKit) at `weather.url`, with the token of `~/.config/wtr/api_token`; it has no hourly forecast, so the widget shows the next six days instead of the next six hours |
+| `weather.rain` | `true` | rain falls over the weather cards while it rains; `false` keeps them still |
 | `processes.rows` | `5` | processes shown, 1 to 10 |
 
 Missing fields take their default.

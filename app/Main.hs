@@ -263,7 +263,7 @@ build app win layered sh current cfg = do
     columns <- Gtk.boxNew Gtk.OrientationHorizontal gap
     Gtk.windowSetChild win (Just columns)
     threads <- newIORef []
-    desk <- Desk app layered <$> newIORef [] <*> newIORef [] <*> newIORef (const (pure ()))
+    desk <- Desk app layered <$> newIORef [] <*> newIORef [] <*> newIORef (const (pure ())) <*> newIORef True
     let margin = fromIntegral (cfgMargin cfg)
     cols <- forM inColumns $ \kinds -> do
         col <- Gtk.boxNew Gtk.OrientationVertical gap
@@ -295,6 +295,7 @@ build app win layered sh current cfg = do
         when filled (Gtk.windowPresent own)
 
     pure $ do
+        writeIORef (dkAlive desk) False
         readIORef (dkWindows desk) >>= mapM_ Gtk.windowDestroy
         -- killThread waits for the thread to get the signal; don't block GTK on it.
         readIORef threads >>= mapM_ (forkIO . killThread)
@@ -365,8 +366,22 @@ addWidget sh cfg desk host threads box kind = case kind of
         previous <- readIORef (shWeatherPlace sh)
         when (previous /= Just (source, place)) $ writeIORef (shWeather sh) Nothing
         writeIORef (shWeatherPlace sh) (Just (source, place))
-        area <- canvas box size (draw <$> readIORef (shWeather sh))
+        let raining = (cfgRain cfg &&) . isRaining <$> readIORef (shWeather sh)
+        area <- canvas box size $ do
+            weather <- readIORef (shWeather sh)
+            wet <- raining
+            micros <- GLib.getMonotonicTime
+            pure (draw (if wet && isJust weather then Just (fromIntegral micros / 1e6) else Nothing) weather)
         modifyIORef (shWeatherRedraw sh) (>> redrawLater area)
+        -- While it rains the card is repainted 25 times a second; otherwise
+        -- the weather is only looked at now and then.
+        let tick = do
+                alive <- readIORef (dkAlive desk)
+                when alive $ do
+                    wet <- raining
+                    when wet (Gtk.widgetQueueDraw area)
+                    void (GLib.timeoutAdd GLib.PRIORITY_DEFAULT (if wet then 40 else 5000) (False <$ tick))
+        when (cfgRain cfg) tick
         running <- atomicModifyIORef' (shWeatherRunning sh) (True,)
         unless running . background . weatherLoop source place $ \w -> do
             writeIORef (shWeather sh) (Just w)
@@ -418,6 +433,8 @@ data Desk = Desk
     -- ^ The windows besides the main one, closed with the configuration.
     , dkLeft :: IORef ([(WidgetKind, (Int, Int))] -> IO ())
     -- ^ Told the new positions when a card has been dropped.
+    , dkAlive :: IORef Bool
+    -- ^ Until the configuration is torn down; timers stop when it is not.
     }
 
 -- | A card on the screen: its distance from the two edges of the corner

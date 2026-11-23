@@ -12,6 +12,7 @@ module Weather
     , renderWeather
     , forecastSize
     , renderForecast
+    , isRaining
     ) where
 
 import Control.Concurrent (threadDelay)
@@ -362,11 +363,50 @@ describe c
 weatherSize :: (Double, Double)
 weatherSize = (300, 150)
 
-renderWeather :: Theme -> Place -> Maybe Weather -> Render ()
-renderWeather th place mw = do
+-- | Whether it rains right now, so the cards are worth animating.
+isRaining :: Maybe Weather -> Bool
+isRaining mw = case sky . wCode <$> mw of
+    Just Rain -> True
+    Just Storm -> True
+    _ -> False
+
+{- | Rain falling over a card of the given size, at a time in seconds: slanted
+lines in the rain color. The drops that look near are longer, thicker, more
+opaque and faster than the ones that look far. Each drop always falls along
+the same line; only how far down it is depends on the time.
+-}
+rain :: Theme -> (Double, Double) -> Double -> Render ()
+rain th (w, h) t = do
+    save
+    roundRect (Rect 0.5 0.5 (w - 1) (h - 1)) (cardRadius th)
+    clip
+    setLineCap LineCapRound
+    forM_ [1 .. round (w * h / 1350) :: Int] $ \i -> do
+        let depth = noise i 1
+            len = 7 + 9 * depth
+            fallen = part (noise i 2 + t * (0.9 + 0.7 * depth)) * (h + 2 * len) - len
+            x = noise i 3 * (w + 0.18 * h) - slant * fallen
+        rgba (rainColor th) (0.10 + 0.30 * depth)
+        setLineWidth (0.8 + 0.7 * depth)
+        newPath
+        moveTo x fallen
+        lineTo (x - slant * len) (fallen + len)
+        stroke
+    restore
+  where
+    slant = 0.18
+    part v = v - fromIntegral (floor v :: Integer)
+    -- A fixed number between 0 and 1 for each drop and each of its traits.
+    noise :: Int -> Double -> Double
+    noise i k = part (sin (fromIntegral i * 12.9898 + k * 78.233) * 43758.5453)
+
+-- | The cards take the time (in seconds) to draw the rain at, when it rains.
+renderWeather :: Theme -> Place -> Maybe Double -> Maybe Weather -> Render ()
+renderWeather th place raining mw = do
     let (w, h) = weatherSize
         pad = 16
     card th (Rect 0.5 0.5 (w - 1) (h - 1))
+    forM_ raining (rain th weatherSize)
     alertBorder th weatherSize mw
     now th place mw w pad
     case mw of
@@ -414,11 +454,12 @@ now th place mw w pad = do
 forecastSize :: (Double, Double)
 forecastSize = (300, 314)
 
-renderForecast :: Theme -> Place -> Maybe Weather -> Render ()
-renderForecast th place mw = do
+renderForecast :: Theme -> Place -> Maybe Double -> Maybe Weather -> Render ()
+renderForecast th place raining mw = do
     let (w, h) = forecastSize
         pad = 16
     card th (Rect 0.5 0.5 (w - 1) (h - 1))
+    forM_ raining (rain th forecastSize)
     alertBorder th forecastSize mw
     now th place mw w pad
     font th FontWeightNormal 12

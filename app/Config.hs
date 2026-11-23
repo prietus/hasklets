@@ -87,6 +87,8 @@ data Config = Config
     -- ^ Widgets dragged out of their column: how far each one is from the
     -- two edges of the corner, horizontally and vertically.
     , cfgWeatherSource :: Source
+    , cfgRain :: Bool
+    -- ^ Whether rain falls over the weather cards while it rains.
     , cfgPlace :: Place
     -- ^ Forecast location. Its coordinates are sent to api.open-meteo.com.
     , cfgProcessRows :: Int
@@ -98,7 +100,7 @@ instance Eq Config where
       where
         -- In whatever order they were dragged.
         positions c = Map.fromList [(widgetId k, at) | (k, at) <- cfgPositions c]
-        key c = (themeId (cfgTheme c), cfgScale c, cfgCorner c, cfgMargin c, cfgGap c, cfgColumns c, positions c, cfgWeatherSource c, cfgPlace c, cfgProcessRows c)
+        key c = (themeId (cfgTheme c), cfgScale c, cfgCorner c, cfgMargin c, cfgGap c, cfgColumns c, positions c, cfgWeatherSource c, cfgRain c, cfgPlace c, cfgProcessRows c)
 
 defaultConfig :: Config
 defaultConfig =
@@ -111,6 +113,7 @@ defaultConfig =
         , cfgColumns = [[WeatherW, SystemW, MprisW], [DisksW, ProcessesW]]
         , cfgPositions = []
         , cfgWeatherSource = OpenMeteo
+        , cfgRain = True
         , cfgPlace = Place{placeName = "Madrid", placeLat = 40.42, placeLon = -3.70}
         , cfgProcessRows = 5
         }
@@ -131,6 +134,7 @@ instance FromJSON Config where
         lon <- weather .:? "longitude" .!= placeLon (cfgPlace d)
         provider <- weather .:? "provider" .!= "open-meteo"
         address <- weather .:? "url" .!= ""
+        rain <- weather .:? "rain" .!= cfgRain d
         source <- case provider :: Text of
             "open-meteo" -> pure OpenMeteo
             "wtr" -> pure (Wtr address)
@@ -151,6 +155,7 @@ instance FromJSON Config where
                     , Just k <- [find ((== name') . widgetId) [minBound .. maxBound]]
                     ]
                 , cfgWeatherSource = source
+                , cfgRain = rain
                 , cfgPlace = Place name (clamp (-90) 90 lat) (clamp (-180) 180 lon)
                 , cfgProcessRows = clamp 1 10 rows
                 }
@@ -195,6 +200,7 @@ encodeConfig cfg = "{\n" <> BL.intercalate ",\n" (map field fields) <> "\n}\n"
             ( "weather"
             , object $
                 ["name" .= placeName place, "latitude" .= placeLat place, "longitude" .= placeLon place]
+                    <> ["rain" .= cfgRain cfg]
                     <> case cfgWeatherSource cfg of
                         OpenMeteo -> ["provider" .= ("open-meteo" :: Text)]
                         Wtr address -> ["provider" .= ("wtr" :: Text), "url" .= address]
