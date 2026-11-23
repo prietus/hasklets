@@ -63,6 +63,7 @@ data Theme = Theme
     , cloudColor :: RGB
     , rainColor :: RGB
     , fontFamily :: String
+    -- ^ Where it is not installed, the system falls back to its default font.
     , gaugeStyle :: GaugeStyle
     , sparkStyle :: SparkStyle
     }
@@ -109,7 +110,7 @@ mocha =
         , sunColor = hex "#f9e2af"
         , cloudColor = hex "#bac2de"
         , rainColor = hex "#89b4fa"
-        , fontFamily = "sans-serif"
+        , fontFamily = "Inter"
         , gaugeStyle = Ring
         , sparkStyle = Area
         }
@@ -159,7 +160,7 @@ nord =
         , sunColor = hex "#ebcb8b"
         , cloudColor = hex "#d8dee9"
         , rainColor = hex "#81a1c1"
-        , fontFamily = "sans-serif"
+        , fontFamily = "Inter"
         , gaugeStyle = Arc
         , sparkStyle = Bars
         }
@@ -215,7 +216,7 @@ glass =
         , sunColor = (1.00, 0.78, 0.25)
         , cloudColor = (0.88, 0.90, 0.94)
         , rainColor = (0.40, 0.68, 1.00)
-        , fontFamily = "sans-serif"
+        , fontFamily = "Inter"
         , gaugeStyle = Arc
         , sparkStyle = Area
         }

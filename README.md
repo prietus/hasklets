@@ -102,6 +102,10 @@ A theme is a record in `app/Theme.hs` with the colors, the corner radius,
 the font and the style of gauges and charts; adding one is adding a record
 to the `themes` list.
 
+The themes use the [Inter](https://rsms.me/inter/) font (`inter-font` on
+Arch), except the one in monospace; without it they are drawn in the
+system's default font.
+
 ### Calendar
 
 The calendar widget is hidden until it is added to a column. Its accounts
