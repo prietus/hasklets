@@ -6,6 +6,10 @@ compositor with wlr-layer-shell; made to go with
 [rivermonad](https://github.com/prietus/rivermonad) and
 [waymobar](https://github.com/prietus/waymobar).
 
+![hasklets on a rivermonad desktop: weather with the week ahead, the journal, processes, disks, CPU, memory and network, and the media player, under waymobar and over the bgmonad wallpaper](docs/desktop.png)
+
+*Move them around: drag a widget and it sticks to the sides of the others.*
+
 ![hasklets on a rivermonad desktop: weather with forecast, CPU, memory and network, disks, top processes, calendar and media player, dragged around and sticking to each other's sides](docs/drag.gif)
 
 * **Weather**: current conditions, high and low, and the next six hours,
