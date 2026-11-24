@@ -24,6 +24,8 @@ compositor with wlr-layer-shell; made to go with
 * **Processes**: the ones using the most CPU, with their memory
 * **Calendar**: the events of the next two weeks from iCloud, Google, any
   CalDAV server or an iCal address
+* **Journal** (`journal`, hidden by default): what is new in the systemd
+  journal, instead of the journal itself
 * five themes: dark, light, Nord, Gruvbox and a translucent glass look
 * configured with a JSON file that is reloaded when it changes, or from a
   settings window (right-click any widget)
@@ -77,13 +79,14 @@ configuration is kept.
 | `corner` | `"top-left"` | or `"top-right"`, `"bottom-left"`, `"bottom-right"` |
 | `margin` | `24` | distance from the screen edges, in logical pixels |
 | `gap` | `14` | space between widgets |
-| `columns` | see above | columns from left to right, each a list of `weather`, `forecast`, `system`, `mpris`, `disks`, `processes`, `calendar`; a widget that is not listed is hidden |
+| `columns` | see above | columns from left to right, each a list of `weather`, `forecast`, `system`, `mpris`, `disks`, `processes`, `calendar`, `journal`; a widget that is not listed is hidden |
 | `positions` | `{}` | widgets dragged out of their column, as `{"disks": [640, 300]}`: the distance from the two edges of the corner, in logical pixels |
 | `weather.name` | `"Madrid"` | title of the weather widget |
 | `weather.latitude`, `weather.longitude` | `40.42`, `-3.70` | forecast location; sent to the weather provider |
 | `weather.provider` | `"open-meteo"` | or `"wtr"`: a wtr server (WeatherKit) at `weather.url`, with the token of `~/.config/wtr/api_token`; it has no hourly forecast, so the widget shows the next six days instead of the next six hours |
 | `weather.rain` | `true` | rain falls over the weather cards while it rains; `false` keeps them still |
 | `processes.rows` | `5` | processes shown, 1 to 10 |
+| `journal.rows` | `4` | messages the journal card has room for, 1 to 8 |
 
 Missing fields take their default.
 
@@ -134,6 +137,36 @@ Passwords reach `curl` through its standard input, never on its command
 line. Events are fetched every ten minutes. Repeating events are expanded
 for daily, weekly, monthly and yearly rules; the rarer parts of a rule
 (`BYMONTHDAY`, `BYSETPOS`...) are ignored.
+
+### Journal
+
+The journal widget is hidden until it is added to a column. A day of logs is
+thousands of lines, nearly all of them the same few messages over and over,
+so the card does not show the log: it groups the warnings and errors by who
+logged them and by the shape of the message (its text without the numbers),
+and gives a row to
+
+* a message whose shape was first seen in the last 24 hours, with a full dot
+  and its source in bold: a warning that has been coming for longer than
+  that is known noise, and only counts in the total at the bottom;
+* an error, a crash (`coredump`) or anything worse, new or not; one that
+  keeps coming back has a hollow dot.
+
+Each row has how many times the message was logged in the last day and how
+long ago the last one was. Above them, a bar for every minute of the last
+hour: as tall as the lines logged in it (on a logarithmic scale) and
+coloured when one of them belongs to a row. Below, the units systemd has as
+failed. With nothing to show, the card shrinks to the chart.
+
+GDM logs under its own name, `gdm-wayland-session`, everything the session
+writes to its standard output: the compositor and whatever it starts. Such a
+line is given to the program it begins with (`waymobar: ...`) when there is
+one.
+
+It reads `journalctl`, and what is known comes from the last week of the
+journal itself, so nothing is stored. To see the system's messages and not
+only your own, your user has to be in the `wheel`, `adm` or
+`systemd-journal` group.
 
 ### Placing widgets by hand
 

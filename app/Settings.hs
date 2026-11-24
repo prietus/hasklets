@@ -143,6 +143,12 @@ settingsWindow app = do
     rows <- spin 1 10 1 0 (fromIntegral (cfgProcessRows cfg))
     gridRow pgrid 0 "Processes shown" rows
 
+    -- Journal.
+    heading root "Journal"
+    jgrid <- newGrid root
+    messages <- spin 1 8 1 0 (fromIntegral (cfgJournalRows cfg))
+    gridRow jgrid 0 "Messages shown" messages
+
     -- Calendars. The accounts go to their own file, not to the configuration.
     heading root "Calendars"
     stored <- either (const []) id <$> loadAccounts
@@ -219,6 +225,7 @@ settingsWindow app = do
         latV <- Gtk.spinButtonGetValue lat
         lonV <- Gtk.spinButtonGetValue lon
         rowsV <- Gtk.spinButtonGetValue rows
+        messagesV <- Gtk.spinButtonGetValue messages
         sourceIx <- Gtk.dropDownGetSelected provider'
         rainV <- Gtk.switchGetActive rain
         serverV <- T.strip <$> Gtk.editableGetText server
@@ -238,6 +245,7 @@ settingsWindow app = do
                     , cfgRain = rainV
                     , cfgPlace = Place (T.unpack (T.strip nameV)) latV lonV
                     , cfgProcessRows = round rowsV
+                    , cfgJournalRows = round messagesV
                     }
         saved <- try $ do
             saveConfig new

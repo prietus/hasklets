@@ -23,6 +23,7 @@ executable hasklets
                       Disks
                       Draw
                       Ical
+                      Journal
                       Metrics
                       Mpris
                       Processes

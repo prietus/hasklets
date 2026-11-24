@@ -29,6 +29,7 @@ import System.Environment (getArgs, getExecutablePath)
 import System.Exit (exitFailure)
 import System.IO (hPutStrLn, stderr)
 import Data.Time (getZonedTime, zonedTimeToLocalTime)
+import Data.Time.Clock.POSIX (getPOSIXTime)
 import System.Process (spawnProcess, waitForProcess)
 
 import Accounts (accountsPath)
@@ -36,6 +37,7 @@ import Calendar
 import Config
 import Disks
 import Draw
+import Journal
 import Metrics
 import Mpris
 import Processes
@@ -137,6 +139,7 @@ data Shared = Shared
     , shDisks :: IORef [Disk]
     , shProcs :: IORef [Proc]
     , shAgenda :: IORef Agenda
+    , shJournal :: IORef Journal
     }
 
 newShared :: IO Shared
@@ -158,6 +161,7 @@ newShared = do
         <*> newIORef []
         <*> newIORef []
         <*> newIORef emptyAgenda
+        <*> newIORef emptyJournal
 
 -- Window --------------------------------------------------------------------
 
@@ -352,6 +356,18 @@ addWidget sh cfg desk host threads box kind = case kind of
             void . GLib.idleAdd GLib.PRIORITY_DEFAULT $ do
                 n <- (`calendarLines` agenda) <$> localNow
                 Gtk.drawingAreaSetContentHeight area (round (k * snd (calendarSize n)))
+                Gtk.widgetQueueDraw area
+                pure False
+    JournalW -> do
+        let rows = cfgJournalRows cfg
+            clock = realToFrac <$> getPOSIXTime
+        -- The card height follows the messages there are to show.
+        known <- journalLines rows <$> readIORef (shJournal sh)
+        area <- canvas box (journalSize known) (renderJournal th rows <$> clock <*> readIORef (shJournal sh))
+        background . journalLoop $ \j -> do
+            writeIORef (shJournal sh) j
+            void . GLib.idleAdd GLib.PRIORITY_DEFAULT $ do
+                Gtk.drawingAreaSetContentHeight area (round (k * snd (journalSize (journalLines rows j))))
                 Gtk.widgetQueueDraw area
                 pure False
   where

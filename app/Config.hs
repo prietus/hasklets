@@ -29,7 +29,7 @@ import System.FilePath (takeDirectory, (</>))
 import Theme
 import Weather (Place (..), Source (..))
 
-data WidgetKind = WeatherW | ForecastW | SystemW | MprisW | DisksW | ProcessesW | CalendarW
+data WidgetKind = WeatherW | ForecastW | SystemW | MprisW | DisksW | ProcessesW | CalendarW | JournalW
     deriving (Eq, Enum, Bounded)
 
 -- | Name in the JSON file.
@@ -42,6 +42,7 @@ widgetId k = case k of
     DisksW -> "disks"
     ProcessesW -> "processes"
     CalendarW -> "calendar"
+    JournalW -> "journal"
 
 -- | Name in the settings window.
 widgetLabel :: WidgetKind -> Text
@@ -53,6 +54,7 @@ widgetLabel k = case k of
     DisksW -> "Disks"
     ProcessesW -> "Processes"
     CalendarW -> "Calendar"
+    JournalW -> "Journal"
 
 -- | Screen corner the widgets are placed in.
 data Corner = TopLeft | TopRight | BottomLeft | BottomRight
@@ -92,6 +94,8 @@ data Config = Config
     , cfgPlace :: Place
     -- ^ Forecast location. Its coordinates are sent to api.open-meteo.com.
     , cfgProcessRows :: Int
+    , cfgJournalRows :: Int
+    -- ^ Messages the journal card has room for.
     }
 
 -- Themes are compared by name.
@@ -100,7 +104,7 @@ instance Eq Config where
       where
         -- In whatever order they were dragged.
         positions c = Map.fromList [(widgetId k, at) | (k, at) <- cfgPositions c]
-        key c = (themeId (cfgTheme c), cfgScale c, cfgCorner c, cfgMargin c, cfgGap c, cfgColumns c, positions c, cfgWeatherSource c, cfgRain c, cfgPlace c, cfgProcessRows c)
+        key c = (themeId (cfgTheme c), cfgScale c, cfgCorner c, cfgMargin c, cfgGap c, cfgColumns c, positions c, cfgWeatherSource c, cfgRain c, cfgPlace c, cfgProcessRows c, cfgJournalRows c)
 
 defaultConfig :: Config
 defaultConfig =
@@ -116,6 +120,7 @@ defaultConfig =
         , cfgRain = True
         , cfgPlace = Place{placeName = "Madrid", placeLat = 40.42, placeLon = -3.70}
         , cfgProcessRows = 5
+        , cfgJournalRows = 4
         }
 
 -- Missing fields take their default value.
@@ -141,6 +146,8 @@ instance FromJSON Config where
             other -> fail ("unknown weather provider: " <> T.unpack other <> " (available: open-meteo, wtr)")
         processes <- o .:? "processes" .!= mempty
         rows <- processes .:? "rows" .!= cfgProcessRows d
+        journal <- o .:? "journal" .!= mempty
+        messages <- journal .:? "rows" .!= cfgJournalRows d
         pure
             Config
                 { cfgTheme = theme
@@ -158,6 +165,7 @@ instance FromJSON Config where
                 , cfgRain = rain
                 , cfgPlace = Place name (clamp (-90) 90 lat) (clamp (-180) 180 lon)
                 , cfgProcessRows = clamp 1 10 rows
+                , cfgJournalRows = clamp 1 8 messages
                 }
       where
         d = defaultConfig
@@ -206,6 +214,7 @@ encodeConfig cfg = "{\n" <> BL.intercalate ",\n" (map field fields) <> "\n}\n"
                         Wtr address -> ["provider" .= ("wtr" :: Text), "url" .= address]
             )
         , ("processes", object ["rows" .= cfgProcessRows cfg])
+        , ("journal", object ["rows" .= cfgJournalRows cfg])
         ]
 
 configPath :: IO FilePath
