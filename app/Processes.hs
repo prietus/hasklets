@@ -6,6 +6,7 @@ module Processes
     ( Proc
     , processLoop
     , processesSize
+    , processesRows
     , renderProcesses
     ) where
 
@@ -108,13 +109,20 @@ top rows pageSize (Snapshot total0 _ old) (Snapshot total1 cores new) =
 rowH :: Double
 rowH = 24
 
--- | The height depends on how many rows are requested.
-processesSize :: Int -> (Double, Double)
-processesSize rows = (300, 56 + rowH * fromIntegral rows)
+-- | The height is the one on the grid that holds the rows requested.
+processesSize :: Double -> Int -> (Double, Double)
+processesSize gap rows = (cardWidth, fitHeight gap (56 + rowH * fromIntegral rows))
 
-renderProcesses :: Theme -> Int -> [Proc] -> Render ()
-renderProcesses th rows procs = do
-    let (w, h) = processesSize rows
+-- | The rows that fit in that height: the ones requested, or a few more.
+processesRows :: Double -> Int -> Int
+processesRows gap rows = max rows (floor ((snd (processesSize gap rows) - 56) / rowH + 0.001))
+
+-- | @rows@ is how many were requested; as many as fit are drawn.
+renderProcesses :: Theme -> Double -> Int -> [Proc] -> Render ()
+renderProcesses th gap rows procs = do
+    let (w, h) = processesSize gap rows
+        -- The rows share out the height there is.
+        pitch = (h - 56) / fromIntegral (processesRows gap rows)
         pad = 18
         memX = w - pad
         cpuX = w - pad - 74
@@ -127,7 +135,7 @@ renderProcesses th rows procs = do
     rightAligned cpuX 30 "CPU"
     rightAligned memX 30 "Memory"
     forM_ (zip [0 :: Int ..] procs) $ \(i, p) -> do
-        let y = 44 + rowH * fromIntegral i
+        let y = 44 + (pitch - rowH) / 2 + pitch * fromIntegral i
         ink th
         pangoLine th pad y (cpuX - 52 - pad) 13 False (pName p)
         font th FontWeightBold 12

@@ -171,8 +171,10 @@ only your own, your user has to be in the `wheel`, `adm` or
 ### Placing widgets by hand
 
 Drag a widget with the left button to put it anywhere on the screen. It
-leaves its column, and on the way it sticks to the sides of the other
-widgets, so they are easy to line up. The place is saved in `positions`; the
+leaves its column and lands on a grid: columns a widget and a space apart,
+and rows a quarter of that. Every widget is as tall as a whole number of
+rows (four make a square), so however they are grouped they line up, with
+the same space between them all. The place is saved in `positions`; the
 settings window has a button that puts every dragged widget back in its
 column. This needs a compositor with layer-shell.
 

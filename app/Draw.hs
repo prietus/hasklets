@@ -1,6 +1,9 @@
 -- | Cairo drawing primitives: card, round gauge and sparkline, styled by a 'Theme'.
 module Draw
     ( Rect (..)
+    , cardWidth
+    , gridHeight
+    , fitHeight
     , card
     , divider
     , gauge
@@ -33,6 +36,22 @@ import Text.Printf (printf)
 import Theme
 
 data Rect = Rect {rx, ry, rw, rh :: Double}
+
+-- | Every card is this wide.
+cardWidth :: Double
+cardWidth = 300
+
+{- | Cards are as tall as a whole number of units, on a grid that depends on
+the space left between them: four units make a square, and a card of @a + b@
+units is exactly as tall as one of @a@ on top of one of @b@. So the cards of
+two columns side by side line up however they are combined.
+-}
+gridHeight :: Double -> Int -> Double
+gridHeight gap units = fromIntegral units * (cardWidth + gap) / 4 - gap
+
+-- | The shortest height on the grid that holds this much.
+fitHeight :: Double -> Double -> Double
+fitHeight gap natural = gridHeight gap (max 1 (ceiling ((natural + gap) * 4 / (cardWidth + gap) - 0.001)))
 
 -- | Color for a load level: fine, high or critical.
 levelColor :: Theme -> Double -> RGB

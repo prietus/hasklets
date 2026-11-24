@@ -360,8 +360,8 @@ describe c
 
 -- Drawing -------------------------------------------------------------------
 
-weatherSize :: (Double, Double)
-weatherSize = (300, 150)
+weatherSize :: Double -> (Double, Double)
+weatherSize gap = (cardWidth, gridHeight gap 2)
 
 -- | Whether it rains right now, so the cards are worth animating.
 isRaining :: Maybe Weather -> Bool
@@ -401,13 +401,13 @@ rain th (w, h) t = do
     noise i k = part (sin (fromIntegral i * 12.9898 + k * 78.233) * 43758.5453)
 
 -- | The cards take the time (in seconds) to draw the rain at, when it rains.
-renderWeather :: Theme -> Place -> Maybe Double -> Maybe Weather -> Render ()
-renderWeather th place raining mw = do
-    let (w, h) = weatherSize
+renderWeather :: Theme -> Double -> Place -> Maybe Double -> Maybe Weather -> Render ()
+renderWeather th gap place raining mw = do
+    let (w, h) = weatherSize gap
         pad = 16
     card th (Rect 0.5 0.5 (w - 1) (h - 1))
-    forM_ raining (rain th weatherSize)
-    alertBorder th weatherSize mw
+    forM_ raining (rain th (w, h))
+    alertBorder th (w, h) mw
     now th place mw w pad
     case mw of
         Nothing -> do
@@ -421,11 +421,12 @@ renderWeather th place raining mw = do
                 let cx = pad + colW * (fromIntegral i + 0.5)
                 font th FontWeightNormal 11
                 dim th
-                centered cx 91 (hLabel hr)
-                icon th (sky (hCode hr)) (hIsDay hr) cx 108 22
+                -- The strip stands on the bottom of the card.
+                centered cx (h - 56) (hLabel hr)
+                icon th (sky (hCode hr)) (hIsDay hr) cx (h - 40) 22
                 font th FontWeightBold 12
                 ink th
-                centered cx 136 (degrees (hTemp hr))
+                centered cx (h - 13) (degrees (hTemp hr))
 
 -- | The top of a weather card, in a card @w@ wide: the place and, once
 -- known, the weather now with today's high and low.
@@ -452,7 +453,7 @@ now th place mw w pad = do
 
 -- | The weather now, the days ahead and the temperature of the next 24 hours.
 forecastSize :: (Double, Double)
-forecastSize = (300, 314)
+forecastSize = (cardWidth, cardWidth)
 
 renderForecast :: Theme -> Place -> Maybe Double -> Maybe Weather -> Render ()
 renderForecast th place raining mw = do
@@ -467,37 +468,37 @@ renderForecast th place raining mw = do
     case mw of
         Nothing -> centered (w / 2) (h / 2 + 16) "Loading…"
         Just wx -> do
-            divider th (pad, 81) (w - pad, 81)
+            divider th (pad, 78) (w - pad, 78)
             -- The rest is laid out from below the weather now.
-            translate 0 74
+            translate 0 70
             font th FontWeightNormal 12
             dim th
-            moveTo pad 27
+            moveTo pad 26
             let days = wDays wx
                 colW = (w - 2 * pad) / fromIntegral (max 1 (length days))
             case worstAlert (wAlerts wx) of
                 Nothing -> showText (printf "%d-day forecast" (length days) :: String)
                 Just a -> do
                     rgba (alertColor th a) 1
-                    pangoLine th pad 14 (w - 2 * pad) 12 True (T.pack (alertText (wAlerts wx) a))
+                    pangoLine th pad 13 (w - 2 * pad) 12 True (T.pack (alertText (wAlerts wx) a))
             forM_ (zip [0 :: Int ..] days) $ \(i, d) -> do
                 let cx = pad + colW * (fromIntegral i + 0.5)
                 font th FontWeightNormal 11
                 dim th
-                centered cx 50 (dLabel d)
-                icon th (sky (dCode d)) True cx 67 22
+                centered cx 47 (dLabel d)
+                icon th (sky (dCode d)) True cx 63 22
                 font th FontWeightBold 12
                 ink th
-                centered cx 95 (degrees (dMax d))
+                centered cx 90 (degrees (dMax d))
                 font th FontWeightNormal 11
                 dim th
-                centered cx 109 (degrees (dMin d))
-            divider th (pad, 121) (w - pad, 121)
+                centered cx 103 (degrees (dMin d))
+            divider th (pad, 114) (w - pad, 114)
             font th FontWeightNormal 12
             dim th
-            moveTo pad 141
+            moveTo pad 133
             showText ("Next 24 hours" :: String)
-            temperatureCurve th (Rect pad 164 (w - 2 * pad) 50) (wCurve wx)
+            temperatureCurve th (Rect pad 155 (w - 2 * pad) 44) (wCurve wx)
 
 -- | The temperatures as an area chart, with the highest one labelled and
 -- the hour marked every six.

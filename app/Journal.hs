@@ -303,14 +303,18 @@ journalLines :: Int -> Journal -> Int
 journalLines rows j = min rows (length (jRows j))
 
 -- | The height depends on how many rows there are.
-journalSize :: Int -> (Double, Double)
-journalSize n = (300, 88 + rowH * fromIntegral n + 34)
+-- | The height on the grid that holds this many rows.
+journalSize :: Double -> Int -> (Double, Double)
+journalSize gap n = (cardWidth, fitHeight gap (88 + rowH * fromIntegral n + 34))
 
 -- | @now@ is in seconds since the epoch.
-renderJournal :: Theme -> Int -> Double -> Journal -> Render ()
-renderJournal th rows now j = do
+renderJournal :: Theme -> Double -> Int -> Double -> Journal -> Render ()
+renderJournal th gap rows now j = do
     let shown = take rows (jRows j)
-        (w, h) = journalSize (length shown)
+        (w, h) = journalSize gap (length shown)
+        -- The rows spread a little over the height there is; the last line
+        -- stands on the bottom of the card.
+        pitch = min (rowH * 1.3) ((h - 88 - 34) / fromIntegral (max 1 (length shown)))
         pad = 18
         level p = if p <= 3 then critColor th else warnColor th
     card th (Rect 0.5 0.5 (w - 1) (h - 1))
@@ -338,7 +342,7 @@ renderJournal th rows now j = do
         fill
 
     forM_ (zip [0 :: Int ..] shown) $ \(i, r) -> do
-        let y = 88 + rowH * fromIntegral i
+        let y = 88 + (pitch - rowH) / 2 + pitch * fromIntegral i
             times = if rCount r > 1 then "×" <> compact (rCount r) <> " · " else ""
         -- A full dot for what is new, a hollow one for what keeps coming back.
         rgba (level (rPrio r)) 1
@@ -352,7 +356,7 @@ renderJournal th rows now j = do
         rightAligned (w - pad) (y + 12) (times <> age (now - rLast r))
         pangoLine th (pad + 15) (y + 17) (w - 2 * pad - 15) 11.5 False (rText r)
 
-    let y = 88 + rowH * fromIntegral (length shown)
+    let y = h - 34
         rest = jTotal j - sum (map rCount shown)
         failed = length (jFailed j)
     divider th (pad, y + 2) (w - pad, y + 2)

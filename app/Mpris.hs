@@ -184,86 +184,94 @@ loadArt url
 
 -- Drawing -------------------------------------------------------------------
 
-mprisSize :: (Double, Double)
-mprisSize = (300, 96)
+-- | The space between cards decides how tall the card is, and with it how
+-- big the cover is and where everything next to it goes.
+mprisSize :: Double -> (Double, Double)
+mprisSize gap = (cardWidth, gridHeight gap 2)
 
-artRect :: Rect
-artRect = Rect 16 16 64 64
+-- The cover is a square as tall as the card allows.
+artRect :: Double -> Rect
+artRect gap = Rect 16 16 side side
+  where
+    side = snd (mprisSize gap) - 32
 
-textLeft, controlsY :: Double
-textLeft = 94
-controlsY = 68
+textLeft, controlsY, progressY :: Double -> Double
+textLeft gap = 16 + rw (artRect gap) + 14
+controlsY gap = snd (mprisSize gap) - 52
+progressY gap = snd (mprisSize gap) - 23
 
-buttons :: [(Action, Double)]
-buttons = [(Previous, textLeft + 10), (PlayPause, textLeft + 46), (Next, textLeft + 82)]
+buttons :: Double -> [(Action, Double)]
+buttons gap = [(Previous, textLeft gap + 10), (PlayPause, textLeft gap + 46), (Next, textLeft gap + 82)]
 
 -- | Which button is under the pointer, if any.
-actionAt :: Double -> Double -> Maybe Action
-actionAt x y = fst <$> find hit buttons
+actionAt :: Double -> Double -> Double -> Maybe Action
+actionAt gap x y = fst <$> find hit (buttons gap)
   where
-    hit (_, bx) = abs (x - bx) <= 16 && abs (y - controlsY) <= 16
+    hit (_, bx) = abs (x - bx) <= 16 && abs (y - controlsY gap) <= 16
 
-renderMpris :: Theme -> Maybe Now -> Render ()
-renderMpris th now = do
-    let (w, h) = mprisSize
-        textW = w - textLeft - 16
+renderMpris :: Theme -> Double -> Maybe Now -> Render ()
+renderMpris th gap now = do
+    let (w, h) = mprisSize gap
+        left = textLeft gap
+        textW = w - left - 16
+        cy = controlsY gap
+        triangle x dir size = do
+            newPath
+            moveTo x (cy - size)
+            lineTo (x + dir * size * 1.5) cy
+            lineTo x (cy + size)
+            closePath
+            fill
+        -- Next/previous: triangle and bar.
+        skip bx dir = do
+            triangle (bx - dir * 5) dir 6
+            newPath
+            rectangle (bx + dir * 5 - 1.5) (cy - 6) 3 12
+            fill
     card th (Rect 0.5 0.5 (w - 1) (h - 1))
     case now of
         Nothing -> do
-            artwork th Nothing
+            artwork th gap Nothing
             dim th
-            pangoLine th textLeft 38 textW 13 False "Nothing playing"
+            pangoLine th left (h / 2 - 9) textW 13 False "Nothing playing"
         Just (Now tr art) -> do
-            artwork th art
+            artwork th gap art
             ink th
-            pangoLine th textLeft 14 textW 14 True (trTitle tr)
+            pangoLine th left 18 textW 14 True (trTitle tr)
             dim th
-            pangoLine th textLeft 33 textW 12 False (trArtist tr)
+            pangoLine th left 38 textW 12 False (trArtist tr)
 
             ink th
-            forM_ buttons $ \(action, bx) -> case action of
+            forM_ (buttons gap) $ \(action, bx) -> case action of
                 Previous -> skip bx (-1)
                 Next -> skip bx 1
                 PlayPause
                     | trPlaying tr -> do
                         newPath
-                        rectangle (bx - 6) (controlsY - 7) 4 14
-                        rectangle (bx + 2) (controlsY - 7) 4 14
+                        rectangle (bx - 6) (cy - 7) 4 14
+                        rectangle (bx + 2) (cy - 7) 4 14
                         fill
                     | otherwise -> triangle (bx - 5) 1 7
 
             when (trLength tr > 0) $ do
-                let x0 = textLeft + 108
-                    x1 = w - 16
+                -- The progress has a line of its own, under the buttons.
+                let x0 = left + 2
+                    x1 = w - 18
+                    py = progressY gap
                     frac = max 0 (min 1 (fromIntegral (trPosition tr) / fromIntegral (trLength tr)))
                 setLineWidth 3
                 setLineCap LineCapRound
                 track th
-                newPath >> moveTo x0 controlsY >> lineTo x1 controlsY >> stroke
+                newPath >> moveTo x0 py >> lineTo x1 py >> stroke
                 ink th
-                newPath >> moveTo x0 controlsY >> lineTo (x0 + (x1 - x0) * frac) controlsY >> stroke
-  where
-    -- Triangle with its base at @x@ pointing towards @dir@ (1 right, -1 left).
-    triangle x dir size = do
-        newPath
-        moveTo x (controlsY - size)
-        lineTo (x + dir * size * 1.5) controlsY
-        lineTo x (controlsY + size)
-        closePath
-        fill
-    -- Next/previous: triangle and bar.
-    skip bx dir = do
-        triangle (bx - dir * 5) dir 6
-        newPath
-        rectangle (bx + dir * 5 - 1.5) (controlsY - 6) 3 12
-        fill
+                newPath >> moveTo x0 py >> lineTo (x0 + (x1 - x0) * frac) py >> stroke
 
 -- | Cover art clipped to rounded corners, or a placeholder with a note.
-artwork :: Theme -> Maybe GdkPixbuf.Pixbuf -> Render ()
-artwork th art = do
-    let Rect x y w h = artRect
+artwork :: Theme -> Double -> Maybe GdkPixbuf.Pixbuf -> Render ()
+artwork th gap art = do
+    let Rect x y w h = artRect gap
     save
-    roundRect artRect (min 10 (cardRadius th))
+    roundRect (artRect gap) (min 10 (cardRadius th))
     clip
     track th
     paint

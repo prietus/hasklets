@@ -9,7 +9,6 @@ module Main (main) where
 
 import Control.Concurrent (ThreadId, forkIO, killThread)
 import Control.Monad (forM, forM_, join, unless, void, when)
-import Data.List (sortOn)
 import Data.Maybe (isJust, isNothing)
 import Data.GI.Base (touchManagedPtr)
 import Data.IORef
@@ -68,7 +67,7 @@ runWidgets = do
 -- System --------------------------------------------------------------------
 
 cardSize :: Double
-cardSize = 300
+cardSize = cardWidth
 
 -- | Milliseconds between CPU, memory and network samples.
 intervalMs :: Int
@@ -267,7 +266,7 @@ build app win layered sh current cfg = do
     columns <- Gtk.boxNew Gtk.OrientationHorizontal gap
     Gtk.windowSetChild win (Just columns)
     threads <- newIORef []
-    desk <- Desk app layered <$> newIORef [] <*> newIORef [] <*> newIORef (const (pure ())) <*> newIORef True
+    desk <- Desk app layered <$> newIORef [] <*> newIORef (const (pure ())) <*> newIORef True
     let margin = fromIntegral (cfgMargin cfg)
     cols <- forM inColumns $ \kinds -> do
         col <- Gtk.boxNew Gtk.OrientationVertical gap
@@ -288,7 +287,9 @@ build app win layered sh current cfg = do
         then Gtk.widgetSetVisible win False
         else Gtk.windowPresent win
 
-    forM_ free $ \(kind, at@(x, y)) -> do
+    -- A position saved off the grid (by hand, or with another size or
+    -- spacing) is shown at the nearest place on it.
+    forM_ [(kind, onGrid cfg (fromIntegral x', fromIntegral y')) | (kind, (x', y')) <- free] $ \(kind, at@(x, y)) -> do
         own <- floating app (cfgCorner cfg) LS.LayerBottom at
         box <- Gtk.boxNew Gtk.OrientationVertical 0
         Gtk.windowSetChild own (Just box)
@@ -310,52 +311,54 @@ build app win layered sh current cfg = do
 
 addWidget :: Shared -> Config -> Desk -> Host -> IORef [ThreadId] -> Gtk.Box -> WidgetKind -> IO ()
 addWidget sh cfg desk host threads box kind = case kind of
-    WeatherW -> weatherCard weatherSize (renderWeather th (cfgPlace cfg))
+    WeatherW -> weatherCard (weatherSize gap) (renderWeather th gap (cfgPlace cfg))
     ForecastW -> weatherCard forecastSize (renderForecast th (cfgPlace cfg))
     SystemW -> do
         area <- canvas box (cardSize, cardSize) (renderSystem th <$> readIORef (shSystem sh))
         writeIORef (shSystemRedraw sh) (Gtk.widgetQueueDraw area)
     MprisW -> forM_ (shBus sh) $ \conn -> do
-        area <- canvas box mprisSize (renderMpris th <$> readIORef (shNow sh))
+        area <- canvas box (mprisSize gap) (renderMpris th gap <$> readIORef (shNow sh))
         background . mprisLoop conn $ \n -> do
             writeIORef (shNow sh) n
             redrawLater area
         click <- Gtk.gestureClickNew
         void $ Gtk.onGestureClickPressed click $ \_ x y -> do
             playing <- readIORef (shNow sh)
-            case (playing, actionAt (x / k) (y / k)) of
+            case (playing, actionAt gap (x / k) (y / k)) of
                 (Just n, Just action) -> void (forkIO (send conn n action))
                 _ -> pure ()
         Gtk.widgetAddController area click
     DisksW -> do
         -- The card height follows the disks there are.
         known <- readIORef (shDisks sh)
-        area <- canvas box (disksSize known) (renderDisks th <$> readIORef (shDisks sh))
+        area <- canvas box (disksSize gap known) (renderDisks th gap <$> readIORef (shDisks sh))
         background . disksLoop $ \ds -> do
             writeIORef (shDisks sh) ds
             void . GLib.idleAdd GLib.PRIORITY_DEFAULT $ do
-                Gtk.drawingAreaSetContentHeight area (round (k * snd (disksSize ds)))
+                Gtk.drawingAreaSetContentHeight area (round (k * snd (disksSize gap ds)))
                 Gtk.widgetQueueDraw area
                 pure False
     ProcessesW -> do
+        -- As many rows as fit in the card that holds the ones requested.
         let rows = cfgProcessRows cfg
-        area <- canvas box (processesSize rows) (renderProcesses th rows . take rows <$> readIORef (shProcs sh))
-        background . processLoop rows $ \ps -> do
+            fit = processesRows gap rows
+        area <- canvas box (processesSize gap rows) (renderProcesses th gap rows . take fit <$> readIORef (shProcs sh))
+        background . processLoop fit $ \ps -> do
             writeIORef (shProcs sh) ps
             redrawLater area
     CalendarW -> do
         let draw = do
                 now <- zonedTimeToLocalTime <$> getZonedTime
-                renderCalendar th now <$> readIORef (shAgenda sh)
+                renderCalendar th gap now <$> readIORef (shAgenda sh)
             localNow = zonedTimeToLocalTime <$> getZonedTime
         -- The card height follows the events there are to show.
         known <- calendarLines <$> localNow <*> readIORef (shAgenda sh)
-        area <- canvas box (calendarSize known) draw
+        area <- canvas box (calendarSize gap known) draw
         background . calendarLoop $ \agenda -> do
             writeIORef (shAgenda sh) agenda
             void . GLib.idleAdd GLib.PRIORITY_DEFAULT $ do
                 n <- (`calendarLines` agenda) <$> localNow
-                Gtk.drawingAreaSetContentHeight area (round (k * snd (calendarSize n)))
+                Gtk.drawingAreaSetContentHeight area (round (k * snd (calendarSize gap n)))
                 Gtk.widgetQueueDraw area
                 pure False
     JournalW -> do
@@ -363,17 +366,19 @@ addWidget sh cfg desk host threads box kind = case kind of
             clock = realToFrac <$> getPOSIXTime
         -- The card height follows the messages there are to show.
         known <- journalLines rows <$> readIORef (shJournal sh)
-        area <- canvas box (journalSize known) (renderJournal th rows <$> clock <*> readIORef (shJournal sh))
+        area <- canvas box (journalSize gap known) (renderJournal th gap rows <$> clock <*> readIORef (shJournal sh))
         background . journalLoop $ \j -> do
             writeIORef (shJournal sh) j
             void . GLib.idleAdd GLib.PRIORITY_DEFAULT $ do
-                Gtk.drawingAreaSetContentHeight area (round (k * snd (journalSize (journalLines rows j))))
+                Gtk.drawingAreaSetContentHeight area (round (k * snd (journalSize gap (journalLines rows j))))
                 Gtk.widgetQueueDraw area
                 pure False
   where
     th = cfgTheme cfg
     k = cfgScale cfg
     canvas = scaledCanvas desk host cfg kind
+    -- The grid of card heights depends on the space between cards.
+    gap = fromIntegral (cfgGap cfg) :: Double
     background io = forkIO io >>= \t -> modifyIORef threads (t :)
     -- A card painted from the forecast, which is fetched once for all of them.
     weatherCard size draw = do
@@ -424,7 +429,6 @@ scaledCanvas desk host cfg kind box (w, h) draw = do
     let display visible = writeIORef shown visible >> Gtk.widgetQueueDraw area
     -- The window the card is in changes when it is dragged.
     home <- newIORef host
-    modifyIORef (dkCards desk) ((kind, spot cfg home area) :)
     when (dkLayered desk) (draggable desk home cfg kind area paint display)
     secondary <- Gtk.gestureClickNew
     Gtk.gestureSingleSetButton secondary 3
@@ -443,8 +447,6 @@ data Host = Host Gtk.ApplicationWindow (Double, Double) Bool
 data Desk = Desk
     { dkApp :: Gtk.Application
     , dkLayered :: Bool
-    , dkCards :: IORef [(WidgetKind, IO Spot)]
-    -- ^ Where each card is right now.
     , dkWindows :: IORef [Gtk.ApplicationWindow]
     -- ^ The windows besides the main one, closed with the configuration.
     , dkLeft :: IORef ([(WidgetKind, (Int, Int))] -> IO ())
@@ -499,6 +501,20 @@ spot cfg home area = do
         , h
         )
 
+{- | The nearest place for a card on the grid the cards are sized for: columns
+a card and a space apart, and rows a quarter of that, counted from the margin.
+A card placed there lines up with the ones in the columns and with any other
+placed by hand, with the same space between them all.
+-}
+onGrid :: Config -> (Double, Double) -> (Int, Int)
+onGrid cfg (x, y) = (cell column x, cell (column / 4) y)
+  where
+    -- In whole pixels, as GTK lays the columns out.
+    k = cfgScale cfg
+    column = fromIntegral (round (k * cardWidth) + round (k * fromIntegral (cfgGap cfg)) :: Int) :: Double
+    margin = fromIntegral (cfgMargin cfg)
+    cell step v = round (margin + step * fromIntegral (max 0 (round ((v - margin) / step)) :: Int))
+
 {- | Lets a card be dragged with the left button. The card itself stays where
 it is, invisible: what follows the pointer is a copy in a window of its own,
 which keeps the pointer coordinates steady. On dropping it the card moves
@@ -512,16 +528,9 @@ draggable desk home cfg kind area paint display = do
         (vertical, horizontal) = cornerEdges corner
         -- Distances grow away from the corner.
         away edge near = if edge == near then 1 else -1
-        gap = fromIntegral (cfgGap cfg) * cfgScale cfg
-        margin = fromIntegral (cfgMargin cfg)
         begin = do
             (x0, y0, w, h) <- spot cfg home area
-            others <- readIORef (dkCards desk) >>= mapM snd . filter ((/= kind) . fst)
             let start = (round x0, round y0) :: (Int, Int)
-                -- Next to another card, or lined up with one of its sides.
-                stops from size = margin : concat [[a, a + s - size, a + s + gap, a - gap - size] | o <- others, let (a, s) = from o]
-                xs = stops (\(a, _, s, _) -> (a, s)) w
-                ys = stops (\(_, a, _, s) -> (a, s)) h
             copy <- Gtk.drawingAreaNew
             Gtk.drawingAreaSetContentWidth copy (round w)
             Gtk.drawingAreaSetContentHeight copy (round h)
@@ -539,7 +548,8 @@ draggable desk home cfg kind area paint display = do
                 pure False
             at <- newIORef start
             let follow dx dy = do
-                    let to = (snapTo xs (x0 + away horizontal LS.EdgeLeft * dx), snapTo ys (y0 + away vertical LS.EdgeTop * dy))
+                    -- The copy jumps from cell to cell, showing where the card would land.
+                    let to = onGrid cfg (x0 + away horizontal LS.EdgeLeft * dx, y0 + away vertical LS.EdgeTop * dy)
                     before <- readIORef at
                     when (to /= before) $ do
                         LS.setMargin ghost horizontal (fromIntegral (fst to))
@@ -581,11 +591,6 @@ draggable desk home cfg kind area paint display = do
         writeIORef moving Nothing
         forM_ current snd
     Gtk.widgetAddController area drag
-  where
-    -- The nearest stop if it is close enough, and never past the edges.
-    snapTo stops v = case sortOn (abs . subtract v) (filter (>= 0) stops) of
-        (s : _) | abs (s - v) <= 12 -> round s
-        _ -> max 0 (round v) :: Int
 
 openSettings :: IO ()
 openSettings = do

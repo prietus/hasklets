@@ -342,8 +342,8 @@ lineH :: Double
 lineH = 22
 
 -- | The card is as tall as the lines it has to show (see 'calendarLines').
-calendarSize :: Int -> (Double, Double)
-calendarSize n = (300, 50 + lineH * fromIntegral (max 1 n))
+calendarSize :: Double -> Int -> (Double, Double)
+calendarSize gap n = (cardWidth, fitHeight gap (50 + lineH * fromIntegral (max 1 n)))
 
 data Row = DayLine String | EventLine Event | Note String | Problem Text
 
@@ -373,10 +373,12 @@ rows now agenda = take (maxLines - length problems) content <> problems
         | otherwise = grouped
 
 -- | @now@ is the current local time: events that are over are not shown.
-renderCalendar :: Theme -> LocalTime -> Agenda -> Render ()
-renderCalendar th now agenda = do
+renderCalendar :: Theme -> Double -> LocalTime -> Agenda -> Render ()
+renderCalendar th gap now agenda = do
     let ls = rows now agenda
-        (w, h) = calendarSize (length ls)
+        (w, h) = calendarSize gap (length ls)
+        -- The lines spread a little over the height there is.
+        pitch = min (lineH * 1.3) ((h - 50) / fromIntegral (max 1 (length ls)))
         pad = 18
     card th (Rect 0.5 0.5 (w - 1) (h - 1))
     font th FontWeightNormal 12
@@ -384,7 +386,7 @@ renderCalendar th now agenda = do
     moveTo pad 30
     showText (formatTime defaultTimeLocale "%A, %-e %B" (localDay now))
     forM_ (zip [0 :: Int ..] ls) $ \(i, l) -> do
-        let y = 44 + lineH * fromIntegral i
+        let y = 44 + (pitch - lineH) / 2 + pitch * fromIntegral i
         case l of
             DayLine s -> do
                 font th FontWeightBold 11

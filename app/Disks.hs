@@ -151,8 +151,12 @@ ringH = 112
 legendH = 18
 
 -- | The height depends on which disks there are.
-disksSize :: [Disk] -> (Double, Double)
-disksSize disks = (300, 46 + (if null homes then 0 else ringH) + rowH * fromIntegral (length others) + padding)
+disksSize :: Double -> [Disk] -> (Double, Double)
+disksSize gap disks = (cardWidth, fitHeight gap (disksNatural disks))
+
+-- | What the disks take, before the height is rounded up to the grid.
+disksNatural :: [Disk] -> Double
+disksNatural disks = 46 + (if null homes then 0 else ringH) + rowH * fromIntegral (length others) + padding
   where
     (homes, others) = (filter dHome disks, filter (not . dHome) disks)
     padding
@@ -160,20 +164,23 @@ disksSize disks = (300, 46 + (if null homes then 0 else ringH) + rowH * fromInte
         | null others = 6
         | otherwise = 0
 
-renderDisks :: Theme -> [Disk] -> Render ()
-renderDisks th disks = do
-    let (w, h) = disksSize disks
+renderDisks :: Theme -> Double -> [Disk] -> Render ()
+renderDisks th gap disks = do
+    let (w, h) = disksSize gap disks
         pad = 18
         (homes, others) = (filter dHome disks, filter (not . dHome) disks)
+        -- The height left over goes between the blocks, in equal parts.
+        blocks = length (take 1 homes) + length others
+        spare = (h - disksNatural disks) / fromIntegral (blocks + 1)
     card th (Rect 0.5 0.5 (w - 1) (h - 1))
     font th FontWeightNormal 12
     dim th
     moveTo pad 30
     showText ("Disks" :: String)
-    forM_ (take 1 homes) (renderHome th w pad 42)
-    let top = 42 + (if null homes then 0 else ringH)
+    forM_ (take 1 homes) (renderHome th w pad (42 + spare))
+    let top = 42 + (if null homes then 0 else ringH + spare)
     forM_ (zip [0 :: Int ..] others) $ \(i, d) -> do
-        let y = top + rowH * fromIntegral i
+        let y = top + spare + (rowH + spare) * fromIntegral i
             frac = dUsed d / dSize d
             barY = y + 22
             barW = w - 2 * pad
