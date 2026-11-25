@@ -10,6 +10,8 @@ module Mpris
     , mprisSize
     , renderMpris
     , actionAt
+    , artwork
+    , transport
     ) where
 
 import Control.Concurrent (threadDelay)
@@ -214,44 +216,21 @@ renderMpris th gap now = do
     let (w, h) = mprisSize gap
         left = textLeft gap
         textW = w - left - 16
-        cy = controlsY gap
-        triangle x dir size = do
-            newPath
-            moveTo x (cy - size)
-            lineTo (x + dir * size * 1.5) cy
-            lineTo x (cy + size)
-            closePath
-            fill
-        -- Next/previous: triangle and bar.
-        skip bx dir = do
-            triangle (bx - dir * 5) dir 6
-            newPath
-            rectangle (bx + dir * 5 - 1.5) (cy - 6) 3 12
-            fill
     card th (Rect 0.5 0.5 (w - 1) (h - 1))
     case now of
         Nothing -> do
-            artwork th gap Nothing
+            artwork th (artRect gap) Nothing
             dim th
             pangoLine th left (h / 2 - 9) textW 13 False "Nothing playing"
         Just (Now tr art) -> do
-            artwork th gap art
+            artwork th (artRect gap) art
             ink th
             pangoLine th left 18 textW 14 True (trTitle tr)
             dim th
             pangoLine th left 38 textW 12 False (trArtist tr)
 
             ink th
-            forM_ (buttons gap) $ \(action, bx) -> case action of
-                Previous -> skip bx (-1)
-                Next -> skip bx 1
-                PlayPause
-                    | trPlaying tr -> do
-                        newPath
-                        rectangle (bx - 6) (cy - 7) 4 14
-                        rectangle (bx + 2) (cy - 7) 4 14
-                        fill
-                    | otherwise -> triangle (bx - 5) 1 7
+            transport (controlsY gap) (trPlaying tr) (buttons gap)
 
             when (trLength tr > 0) $ do
                 -- The progress has a line of its own, under the buttons.
@@ -266,12 +245,41 @@ renderMpris th gap now = do
                 ink th
                 newPath >> moveTo x0 py >> lineTo (x0 + (x1 - x0) * frac) py >> stroke
 
+-- | The buttons of a player, each centered on its place along the line at
+-- height @cy@, in the current color.
+transport :: Double -> Bool -> [(Action, Double)] -> Render ()
+transport cy playing places = forM_ places $ \(action, bx) -> case action of
+    Previous -> skip bx (-1)
+    Next -> skip bx 1
+    PlayPause
+        | playing -> do
+            newPath
+            rectangle (bx - 6) (cy - 7) 4 14
+            rectangle (bx + 2) (cy - 7) 4 14
+            fill
+        | otherwise -> triangle (bx - 5) 1 7
+  where
+    -- Triangle with its base at @x@ pointing towards @dir@ (1 right, -1 left).
+    triangle x dir size = do
+        newPath
+        moveTo x (cy - size)
+        lineTo (x + dir * size * 1.5) cy
+        lineTo x (cy + size)
+        closePath
+        fill
+    -- Next/previous: triangle and bar.
+    skip bx dir = do
+        triangle (bx - dir * 5) dir 6
+        newPath
+        rectangle (bx + dir * 5 - 1.5) (cy - 6) 3 12
+        fill
+
 -- | Cover art clipped to rounded corners, or a placeholder with a note.
-artwork :: Theme -> Double -> Maybe GdkPixbuf.Pixbuf -> Render ()
-artwork th gap art = do
-    let Rect x y w h = artRect gap
+artwork :: Theme -> Rect -> Maybe GdkPixbuf.Pixbuf -> Render ()
+artwork th place art = do
+    let Rect x y w h = place
     save
-    roundRect (artRect gap) (min 10 (cardRadius th))
+    roundRect place (min 10 (cardRadius th))
     clip
     track th
     paint

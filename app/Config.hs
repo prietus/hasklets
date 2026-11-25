@@ -26,10 +26,11 @@ import Data.Text qualified as T
 import System.Directory
 import System.FilePath (takeDirectory, (</>))
 
+import Mpd (Server (..))
 import Theme
 import Weather (Place (..), Source (..))
 
-data WidgetKind = WeatherW | ForecastW | SystemW | MprisW | DisksW | ProcessesW | CalendarW | JournalW
+data WidgetKind = WeatherW | ForecastW | SystemW | MprisW | DisksW | ProcessesW | CalendarW | JournalW | LunaW | MpdW | MopidyW
     deriving (Eq, Enum, Bounded)
 
 -- | Name in the JSON file.
@@ -43,6 +44,9 @@ widgetId k = case k of
     ProcessesW -> "processes"
     CalendarW -> "calendar"
     JournalW -> "journal"
+    LunaW -> "luna"
+    MpdW -> "mpd"
+    MopidyW -> "mopidy"
 
 -- | Name in the settings window.
 widgetLabel :: WidgetKind -> Text
@@ -55,6 +59,9 @@ widgetLabel k = case k of
     ProcessesW -> "Processes"
     CalendarW -> "Calendar"
     JournalW -> "Journal"
+    LunaW -> "Backups (Luna)"
+    MpdW -> "Music server (MPD)"
+    MopidyW -> "Music server (Mopidy)"
 
 -- | Screen corner the widgets are placed in.
 data Corner = TopLeft | TopRight | BottomLeft | BottomRight
@@ -95,6 +102,9 @@ data Config = Config
     -- ^ Forecast location. Its coordinates are sent to api.open-meteo.com.
     , cfgProcessRows :: Int
     , cfgJournalRows :: Int
+    , cfgMpd :: Server
+    , cfgMopidy :: Server
+    -- ^ The music servers the two cards ask, each its own.
     -- ^ Messages the journal card has room for.
     }
 
@@ -104,7 +114,7 @@ instance Eq Config where
       where
         -- In whatever order they were dragged.
         positions c = Map.fromList [(widgetId k, at) | (k, at) <- cfgPositions c]
-        key c = (themeId (cfgTheme c), cfgScale c, cfgCorner c, cfgMargin c, cfgGap c, cfgColumns c, positions c, cfgWeatherSource c, cfgRain c, cfgPlace c, cfgProcessRows c, cfgJournalRows c)
+        key c = (themeId (cfgTheme c), cfgScale c, cfgCorner c, cfgMargin c, cfgGap c, cfgColumns c, positions c, cfgWeatherSource c, cfgRain c, cfgPlace c, cfgProcessRows c, cfgJournalRows c, cfgMpd c, cfgMopidy c)
 
 defaultConfig :: Config
 defaultConfig =
@@ -121,6 +131,8 @@ defaultConfig =
         , cfgPlace = Place{placeName = "Madrid", placeLat = 40.42, placeLon = -3.70}
         , cfgProcessRows = 5
         , cfgJournalRows = 4
+        , cfgMpd = Server "localhost" 6600 Nothing 1 Nothing
+        , cfgMopidy = Server "localhost" 6600 (Just 6680) 1 Nothing
         }
 
 -- Missing fields take their default value.
@@ -147,6 +159,16 @@ instance FromJSON Config where
         processes <- o .:? "processes" .!= mempty
         rows <- processes .:? "rows" .!= cfgProcessRows d
         journal <- o .:? "journal" .!= mempty
+        mpd <- o .:? "mpd" .!= mempty
+        mpdHost <- mpd .:? "host" .!= svHost (cfgMpd d)
+        mpdPort <- mpd .:? "port" .!= svPort (cfgMpd d)
+        mpdQueue <- mpd .:? "queue" .!= svQueue (cfgMpd d)
+        mpdLevels <- mpd .:? "levels" .!= (0 :: Int)
+        mopidy <- o .:? "mopidy" .!= mempty
+        mopidyHost <- mopidy .:? "host" .!= svHost (cfgMopidy d)
+        mopidyPort <- mopidy .:? "port" .!= svPort (cfgMopidy d)
+        mopidyWeb <- mopidy .:? "http" .!= 6680
+        mopidyQueue <- mopidy .:? "queue" .!= svQueue (cfgMopidy d)
         messages <- journal .:? "rows" .!= cfgJournalRows d
         pure
             Config
@@ -166,6 +188,8 @@ instance FromJSON Config where
                 , cfgPlace = Place name (clamp (-90) 90 lat) (clamp (-180) 180 lon)
                 , cfgProcessRows = clamp 1 10 rows
                 , cfgJournalRows = clamp 1 8 messages
+                , cfgMpd = Server mpdHost (clamp 1 65535 mpdPort) Nothing (clamp 1 10 mpdQueue) (if mpdLevels > 0 then Just (clamp 1 65535 mpdLevels) else Nothing)
+                , cfgMopidy = Server mopidyHost (clamp 1 65535 mopidyPort) (Just (clamp 1 65535 mopidyWeb)) (clamp 1 10 mopidyQueue) Nothing
                 }
       where
         d = defaultConfig
@@ -215,6 +239,11 @@ encodeConfig cfg = "{\n" <> BL.intercalate ",\n" (map field fields) <> "\n}\n"
             )
         , ("processes", object ["rows" .= cfgProcessRows cfg])
         , ("journal", object ["rows" .= cfgJournalRows cfg])
+        , ("mpd", object ["host" .= svHost (cfgMpd cfg), "port" .= svPort (cfgMpd cfg), "queue" .= svQueue (cfgMpd cfg), "levels" .= maybe 0 id (svLevels (cfgMpd cfg))])
+        ,
+            ( "mopidy"
+            , object ["host" .= svHost (cfgMopidy cfg), "port" .= svPort (cfgMopidy cfg), "http" .= svHttp (cfgMopidy cfg), "queue" .= svQueue (cfgMopidy cfg)]
+            )
         ]
 
 configPath :: IO FilePath

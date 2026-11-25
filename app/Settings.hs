@@ -20,6 +20,7 @@ import GI.Pango qualified as Pango
 
 import Accounts
 import Config
+import Mpd (Server (..))
 import Theme
 import Weather (Place (..), Source (..), geocode)
 
@@ -149,6 +150,29 @@ settingsWindow app = do
     messages <- spin 1 8 1 0 (fromIntegral (cfgJournalRows cfg))
     gridRow jgrid 0 "Messages shown" messages
 
+    -- Music servers: each card asks its own.
+    heading root "Music servers"
+    mgrid <- newGrid root
+    mpdHost <- Gtk.entryNew
+    Gtk.editableSetText mpdHost (svHost (cfgMpd cfg))
+    gridRow mgrid 0 "MPD server" mpdHost
+    mpdPort <- spin 1 65535 1 0 (fromIntegral (svPort (cfgMpd cfg)))
+    gridRow mgrid 1 "MPD port" mpdPort
+    mpdQueue <- spin 1 10 1 0 (fromIntegral (svQueue (cfgMpd cfg)))
+    gridRow mgrid 2 "MPD: songs of the queue listed" mpdQueue
+    mpdLevels <- spin 0 65535 1 0 (maybe 0 fromIntegral (svLevels (cfgMpd cfg)))
+    Gtk.widgetSetTooltipText mpdLevels (Just "The port of an mpdvu running next to MPD; 0 for no VU meter")
+    gridRow mgrid 7 "MPD: VU meter port (mpdvu, 0 = off)" mpdLevels
+    mopidyHost <- Gtk.entryNew
+    Gtk.editableSetText mopidyHost (svHost (cfgMopidy cfg))
+    gridRow mgrid 3 "Mopidy server" mopidyHost
+    mopidyPort <- spin 1 65535 1 0 (fromIntegral (svPort (cfgMopidy cfg)))
+    gridRow mgrid 4 "Mopidy port (MPD protocol)" mopidyPort
+    mopidyWeb <- spin 1 65535 1 0 (maybe 6680 fromIntegral (svHttp (cfgMopidy cfg)))
+    gridRow mgrid 5 "Mopidy port (web, for covers)" mopidyWeb
+    mopidyQueue <- spin 1 10 1 0 (fromIntegral (svQueue (cfgMopidy cfg)))
+    gridRow mgrid 6 "Mopidy: songs of the queue listed" mopidyQueue
+
     -- Calendars. The accounts go to their own file, not to the configuration.
     heading root "Calendars"
     stored <- either (const []) id <$> loadAccounts
@@ -226,6 +250,14 @@ settingsWindow app = do
         lonV <- Gtk.spinButtonGetValue lon
         rowsV <- Gtk.spinButtonGetValue rows
         messagesV <- Gtk.spinButtonGetValue messages
+        mpdHostV <- T.strip <$> Gtk.editableGetText mpdHost
+        mpdPortV <- Gtk.spinButtonGetValue mpdPort
+        mopidyHostV <- T.strip <$> Gtk.editableGetText mopidyHost
+        mopidyPortV <- Gtk.spinButtonGetValue mopidyPort
+        mopidyWebV <- Gtk.spinButtonGetValue mopidyWeb
+        mpdQueueV <- Gtk.spinButtonGetValue mpdQueue
+        mpdLevelsV <- round <$> Gtk.spinButtonGetValue mpdLevels
+        mopidyQueueV <- Gtk.spinButtonGetValue mopidyQueue
         sourceIx <- Gtk.dropDownGetSelected provider'
         rainV <- Gtk.switchGetActive rain
         serverV <- T.strip <$> Gtk.editableGetText server
@@ -246,6 +278,8 @@ settingsWindow app = do
                     , cfgPlace = Place (T.unpack (T.strip nameV)) latV lonV
                     , cfgProcessRows = round rowsV
                     , cfgJournalRows = round messagesV
+                    , cfgMpd = Server mpdHostV (round mpdPortV) Nothing (round mpdQueueV) (if mpdLevelsV > 0 then Just mpdLevelsV else Nothing)
+                    , cfgMopidy = Server mopidyHostV (round mopidyPortV) (Just (round mopidyWebV)) (round mopidyQueueV) Nothing
                     }
         saved <- try $ do
             saveConfig new

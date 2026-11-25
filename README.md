@@ -30,6 +30,16 @@ compositor with wlr-layer-shell; made to go with
   CalDAV server or an iCal address
 * **Journal** (`journal`, hidden by default): what is new in the systemd
   journal, instead of the journal itself
+* **Backups** (`luna`, hidden by default): what
+  [Luna](https://github.com/prietus/luna) says about your Borg repositories:
+  how much they hold, the largest ones, and the backup that is running, has
+  failed or comes next. It needs Luna 0.1.3 or newer
+* **Music server** (`mpd` and `mopidy`, hidden by default): what an
+  [MPD](https://www.musicpd.org) or a [Mopidy](https://mopidy.com) server is
+  playing, asked to the server itself, so no player has to be open: cover,
+  edition, format of the audio, outputs and the queue. Click the bar to move
+  in the song or a song of the queue to play it, switch shuffle and repeat,
+  and turn the wheel for the volume
 * five themes: dark, light, Nord, Gruvbox and a translucent glass look
 * configured with a JSON file that is reloaded when it changes, or from a
   settings window (right-click any widget)
@@ -83,7 +93,7 @@ configuration is kept.
 | `corner` | `"top-left"` | or `"top-right"`, `"bottom-left"`, `"bottom-right"` |
 | `margin` | `24` | distance from the screen edges, in logical pixels |
 | `gap` | `14` | space between widgets |
-| `columns` | see above | columns from left to right, each a list of `weather`, `forecast`, `system`, `mpris`, `disks`, `processes`, `calendar`, `journal`; a widget that is not listed is hidden |
+| `columns` | see above | columns from left to right, each a list of `weather`, `forecast`, `system`, `mpris`, `disks`, `processes`, `calendar`, `journal`, `luna`, `mpd`, `mopidy`; a widget that is not listed is hidden |
 | `positions` | `{}` | widgets dragged out of their column, as `{"disks": [640, 300]}`: the distance from the two edges of the corner, in logical pixels |
 | `weather.name` | `"Madrid"` | title of the weather widget |
 | `weather.latitude`, `weather.longitude` | `40.42`, `-3.70` | forecast location; sent to the weather provider |
@@ -91,6 +101,10 @@ configuration is kept.
 | `weather.rain` | `true` | rain falls over the weather cards while it rains; `false` keeps them still |
 | `processes.rows` | `5` | processes shown, 1 to 10 |
 | `journal.rows` | `4` | messages the journal card has room for, 1 to 8 |
+| `mpd.host`, `mpd.port` | `"localhost"`, `6600` | the MPD server of the `mpd` widget |
+| `mopidy.host`, `mopidy.port`, `mopidy.http` | `"localhost"`, `6600`, `6680` | the Mopidy server of the `mopidy` widget: its MPD protocol (the Mopidy-MPD extension) and its web API, where the covers come from |
+| `mpd.queue`, `mopidy.queue` | `1` | songs of the queue listed after the one playing, 1 to 10; the card grows to hold them |
+| `mpd.levels` | `0` | the port of an [mpdvu](https://github.com/prietus/mpdvu) running next to the MPD server (`6601`), for a VU meter of what is playing; `0` for none |
 
 Missing fields take their default.
 

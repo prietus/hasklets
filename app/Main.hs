@@ -37,6 +37,8 @@ import Config
 import Disks
 import Draw
 import Journal
+import Luna
+import Mpd
 import Metrics
 import Mpris
 import Processes
@@ -139,6 +141,9 @@ data Shared = Shared
     , shProcs :: IORef [Proc]
     , shAgenda :: IORef Agenda
     , shJournal :: IORef Journal
+    , shBackups :: IORef (Maybe (Either String Backups))
+    , shMpd :: IORef (Maybe (Either String Player))
+    , shMopidy :: IORef (Maybe (Either String Player))
     }
 
 newShared :: IO Shared
@@ -161,6 +166,9 @@ newShared = do
         <*> newIORef []
         <*> newIORef emptyAgenda
         <*> newIORef emptyJournal
+        <*> newIORef Nothing
+        <*> newIORef Nothing
+        <*> newIORef Nothing
 
 -- Window --------------------------------------------------------------------
 
@@ -361,6 +369,14 @@ addWidget sh cfg desk host threads box kind = case kind of
                 Gtk.drawingAreaSetContentHeight area (round (k * snd (calendarSize gap n)))
                 Gtk.widgetQueueDraw area
                 pure False
+    MpdW -> musicCard "MPD" (cfgMpd cfg) (shMpd sh)
+    MopidyW -> musicCard "Mopidy" (cfgMopidy cfg) (shMopidy sh)
+    LunaW -> do
+        let clock = realToFrac <$> getPOSIXTime
+        area <- canvas box lunaSize (renderLuna th <$> clock <*> readIORef (shBackups sh))
+        background . lunaLoop $ \report -> do
+            writeIORef (shBackups sh) (Just report)
+            redrawLater area
     JournalW -> do
         let rows = cfgJournalRows cfg
             clock = realToFrac <$> getPOSIXTime
@@ -380,6 +396,29 @@ addWidget sh cfg desk host threads box kind = case kind of
     -- The grid of card heights depends on the space between cards.
     gap = fromIntegral (cfgGap cfg) :: Double
     background io = forkIO io >>= \t -> modifyIORef threads (t :)
+    -- A card for a music server, with its buttons.
+    musicCard name server state = do
+        let order o = readIORef state >>= \playing -> void (forkIO (mpdSend server playing o))
+        levels <- newIORef []
+        area <- canvas box (mpdSize gap server) (renderMpd th gap server name <$> readIORef levels <*> readIORef state)
+        -- The meters move many times a second, when there is an mpdvu to ask.
+        forM_ (svLevels server) $ \port ->
+            background . levelsLoop server port $ \now -> do
+                writeIORef levels now
+                redrawLater area
+        background . mpdLoop server $ \player -> do
+            writeIORef state (Just player)
+            redrawLater area
+        click <- Gtk.gestureClickNew
+        void $ Gtk.onGestureClickPressed click $ \_ x y ->
+            forM_ (mpdOrderAt gap server (x / k) (y / k)) order
+        Gtk.widgetAddController area click
+        -- The wheel turns the volume, where the server has one.
+        wheel <- Gtk.eventControllerScrollNew [Gtk.EventControllerScrollFlagsVertical, Gtk.EventControllerScrollFlagsDiscrete]
+        void $ Gtk.onEventControllerScrollScroll wheel $ \_ dy -> do
+            when (dy /= 0) (order (Louder (if dy < 0 then 5 else -5)))
+            pure True
+        Gtk.widgetAddController area wheel
     -- A card painted from the forecast, which is fetched once for all of them.
     weatherCard size draw = do
         let place = cfgPlace cfg

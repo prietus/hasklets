@@ -24,6 +24,8 @@ executable hasklets
                       Draw
                       Ical
                       Journal
+                      Luna
+                      Mpd
                       Metrics
                       Mpris
                       Processes
