@@ -10,7 +10,7 @@ compositor with wlr-layer-shell; made to go with
 
 *Move them around: drag a widget and it sticks to the sides of the others.*
 
-![hasklets on a rivermonad desktop: weather with forecast, CPU, memory and network, disks, top processes, calendar and media player, dragged around and sticking to each other's sides](docs/drag.gif)
+![The widgets dragged around the desktop and landing on the grid: weather, processes, the journal, CPU, memory and network, and the MPD card with its VU meter moving to the music](docs/drag.gif)
 
 * **Weather**: current conditions, high and low, and the next six hours,
   from [Open-Meteo](https://open-meteo.com) (no API key) or from your own
