@@ -1,6 +1,6 @@
 cabal-version:      3.0
 name:               hasklets
-version:            0.1.5.0
+version:            0.1.6.0
 synopsis:           Desktop widgets for Wayland (gtk4-layer-shell) in Haskell
 description:
   hasklets draws widgets on the desktop of Wayland compositors with
