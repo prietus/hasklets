@@ -162,7 +162,10 @@ settingsWindow app = do
     gridRow mgrid 2 "MPD: songs of the queue listed" mpdQueue
     mpdLevels <- spin 0 65535 1 0 (maybe 0 fromIntegral (svLevels (cfgMpd cfg)))
     Gtk.widgetSetTooltipText mpdLevels (Just "The port of an mpdvu running next to MPD; 0 for no VU meter")
-    gridRow mgrid 7 "MPD: VU meter port (mpdvu, 0 = off)" mpdLevels
+    gridRow mgrid 7 "MPD: meter port (mpdvu, 0 = off)" mpdLevels
+    mpdMeter <- Gtk.dropDownNewFromStrings ["VU meter", "Spectrum (mpdvu 0.2)"]
+    Gtk.dropDownSetSelected mpdMeter (if svSpectrum (cfgMpd cfg) then 1 else 0)
+    gridRow mgrid 10 "MPD: meter" mpdMeter
     mopidyHost <- Gtk.entryNew
     Gtk.editableSetText mopidyHost (svHost (cfgMopidy cfg))
     gridRow mgrid 3 "Mopidy server" mopidyHost
@@ -269,6 +272,7 @@ settingsWindow app = do
         mopidyWebV <- Gtk.spinButtonGetValue mopidyWeb
         mpdQueueV <- Gtk.spinButtonGetValue mpdQueue
         mpdLevelsV <- round <$> Gtk.spinButtonGetValue mpdLevels
+        mpdMeterV <- Gtk.dropDownGetSelected mpdMeter
         mopidyQueueV <- Gtk.spinButtonGetValue mopidyQueue
         mopidyGoodiesV <- Gtk.switchGetActive mopidyGoodies
         mopidyLevelsV <- Gtk.dropDownGetSelected mopidyLevels
@@ -294,7 +298,7 @@ settingsWindow app = do
                     , cfgPlace = Place (T.unpack (T.strip nameV)) latV lonV
                     , cfgProcessRows = round rowsV
                     , cfgJournalRows = round messagesV
-                    , cfgMpd = Server mpdHostV (round mpdPortV) Nothing (round mpdQueueV) (if mpdLevelsV > 0 then Just mpdLevelsV else Nothing) False False
+                    , cfgMpd = Server mpdHostV (round mpdPortV) Nothing (round mpdQueueV) (if mpdLevelsV > 0 then Just mpdLevelsV else Nothing) (mpdMeterV == 1) False
                     , cfgMopidy = Server mopidyHostV (round mopidyPortV) (Just (round mopidyWebV)) (round mopidyQueueV) (if mopidyLevelsV > 0 then Just (round mopidyWebV) else Nothing) (mopidyLevelsV == 2) mopidyGoodiesV
                     }
         saved <- try $ do

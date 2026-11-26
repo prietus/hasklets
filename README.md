@@ -106,6 +106,7 @@ configuration is kept.
 | `mopidy.host`, `mopidy.port`, `mopidy.http` | `"localhost"`, `6600`, `6680` | the Mopidy server of the `mopidy` widget: its MPD protocol (the Mopidy-MPD extension) and its web API, where the covers come from |
 | `mpd.queue`, `mopidy.queue` | `1` | songs of the queue listed after the one playing, 1 to 10; the card grows to hold them |
 | `mpd.levels` | `0` | the port of an [mpdvu](https://github.com/prietus/mpdvu) running next to the MPD server (`6601`), for a VU meter of what is playing; `0` for none |
+| `mpd.meter` | `"vu"` | what that meter is: `"vu"` for the level of each channel, or `"spectrum"` for a bar for each band of frequencies, which takes mpdvu 0.2.0 |
 | `mopidy.goodies` | `true` | use [mopidy-goodies](https://github.com/prietus/mopidy-goodies) where the Mopidy server has it: the card then shows the format that really reaches the DAC, whether the path is bit-perfect, and the label, catalogue number and country of the album; `false` never asks for it |
 | `mopidy.levels` | `"off"` | a meter in the Mopidy card, from the visualizer feed of mopidy-goodies: `"vu"` for the level of each channel, `"spectrum"` for a bar for each band of frequencies. The audio comes over the network (uncompressed, some 1.4 Mbit/s) and is worked out here |
 

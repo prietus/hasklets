@@ -64,8 +64,8 @@ data Server = Server
     -- server, which says how loud each channel is; 'Nothing' for no meter.
     , svSpectrum :: Bool
     -- ^ Whether the meter is a spectrum, a bar for each band of frequencies,
-    -- instead of the level of each channel. Only where the audio itself
-    -- comes (the visualizer feed of mopidy-goodies).
+    -- instead of the level of each channel. For an MPD it takes an mpdvu
+    -- that sends the bands (0.2.0).
     , svGoodies :: Bool
     -- ^ Whether to use mopidy-goodies (https://github.com/prietus/mopidy-goodies)
     -- where the Mopidy server has it: it knows what really reaches the DAC
@@ -660,7 +660,7 @@ levelsLoop sv port publish = forever $ do
         -- The server forgets who does not ask again.
         asked' <-
             if now - asked > 3000000
-                then now <$ Gio.socketSendTo socket (Just address) "mpdvu 1 subscribe" noCancel
+                then now <$ Gio.socketSendTo socket (Just address) (if svSpectrum sv then "mpdvu 1 subscribe bands" else "mpdvu 1 subscribe") noCancel
                 else pure asked
         got <- try (Gio.socketReceiveBytes socket 512 500000 noCancel >>= GLib.bytesGetData)
         let shown' = case got of
@@ -670,9 +670,12 @@ levelsLoop sv port publish = forever $ do
                 Left (_ :: SomeException) -> []
         when (shown' /= shown) (publish shown')
         listen socket address asked' shown'
-    -- "mpdvu 1 <sequence> <peak> <rms> ..."
+    -- "mpdvu 1 <sequence> <peak> <rms> ..." for the levels, and for the
+    -- spectrum "mpdvu-bands 1 <sequence> <level> ...", each band read like
+    -- a level whose peak is itself. Only the kind that is shown counts.
     message bytes = case BC.words bytes of
-        ("mpdvu" : "1" : _ : numbers) -> Just (pairs (mapMaybe (readMaybe . BC.unpack) numbers))
+        ("mpdvu" : "1" : _ : numbers) | not (svSpectrum sv) -> Just (pairs (mapMaybe (readMaybe . BC.unpack) numbers))
+        ("mpdvu-bands" : "1" : _ : numbers) | svSpectrum sv -> Just [(v, v) | v <- mapMaybe (readMaybe . BC.unpack) numbers]
         _ -> Nothing
     pairs (peak : rms : rest) = (peak, rms) : pairs rest
     pairs _ = []
@@ -974,9 +977,10 @@ meters th (Rect x y w h) levels = forM_ (zip [0 :: Int ..] channels) $ \(row, (l
 -- where each one was a moment ago.
 spectrum :: Theme -> Rect -> Levels -> Render ()
 spectrum th (Rect x y w h) levels = forM_ (zip [0 :: Int ..] bands) $ \(i, (held, now)) -> do
-    let slot = w / fromIntegral spectrumBars
+    let slot = w / fromIntegral (length bands)
         left = x + slot * fromIntegral i
-        tall v = max 1.5 (h * v)
+        -- Lifted a little: on the plain scale music sits low in the bars.
+        tall v = max 1.5 (h * v ** 0.75)
     rgba (accentColor th) 1
     rectangle left (y + h - tall now) (slot - 1.5) (tall now)
     fill
@@ -985,7 +989,8 @@ spectrum th (Rect x y w h) levels = forM_ (zip [0 :: Int ..] bands) $ \(i, (held
         rectangle left (y + h - tall held) (slot - 1.5) 1.2
         fill
   where
-    bands = take spectrumBars (levels <> repeat (0, 0))
+    -- As many bars as bands come; flat ones until any does.
+    bands = if null levels then replicate spectrumBars (0, 0) else levels
 
 -- | Two arrows that cross, centered on a point, in the current color.
 shuffleSign :: Double -> Double -> Render ()

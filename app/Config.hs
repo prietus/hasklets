@@ -169,6 +169,7 @@ instance FromJSON Config where
         mpdPort <- mpd .:? "port" .!= svPort (cfgMpd d)
         mpdQueue <- mpd .:? "queue" .!= svQueue (cfgMpd d)
         mpdLevels <- mpd .:? "levels" .!= (0 :: Int)
+        mpdMeter <- mpd .:? "meter" .!= ("vu" :: Text)
         mopidy <- o .:? "mopidy" .!= mempty
         mopidyHost <- mopidy .:? "host" .!= svHost (cfgMopidy d)
         mopidyPort <- mopidy .:? "port" .!= svPort (cfgMopidy d)
@@ -201,7 +202,7 @@ instance FromJSON Config where
                 , cfgPlace = Place name (clamp (-90) 90 lat) (clamp (-180) 180 lon)
                 , cfgProcessRows = clamp 1 10 rows
                 , cfgJournalRows = clamp 1 8 messages
-                , cfgMpd = Server mpdHost (clamp 1 65535 mpdPort) Nothing (clamp 1 10 mpdQueue) (if mpdLevels > 0 then Just (clamp 1 65535 mpdLevels) else Nothing) False False
+                , cfgMpd = Server mpdHost (clamp 1 65535 mpdPort) Nothing (clamp 1 10 mpdQueue) (if mpdLevels > 0 then Just (clamp 1 65535 mpdLevels) else Nothing) (mpdMeter == "spectrum") False
                 , cfgMopidy = Server mopidyHost (clamp 1 65535 mopidyPort) (Just (clamp 1 65535 mopidyWeb)) (clamp 1 10 mopidyQueue) (if mopidyLevels /= ("off" :: Text) then Just (clamp 1 65535 mopidyWeb) else Nothing) (mopidyLevels == "spectrum") mopidyGoodies
                 }
       where
@@ -253,7 +254,7 @@ encodeConfig cfg = "{\n" <> BL.intercalate ",\n" (map field [f | f@(_, v) <- fie
             )
         , ("processes", object ["rows" .= cfgProcessRows cfg])
         , ("journal", object ["rows" .= cfgJournalRows cfg])
-        , ("mpd", object ["host" .= svHost (cfgMpd cfg), "port" .= svPort (cfgMpd cfg), "queue" .= svQueue (cfgMpd cfg), "levels" .= maybe 0 id (svLevels (cfgMpd cfg))])
+        , ("mpd", object ["host" .= svHost (cfgMpd cfg), "port" .= svPort (cfgMpd cfg), "queue" .= svQueue (cfgMpd cfg), "levels" .= maybe 0 id (svLevels (cfgMpd cfg)), "meter" .= (if svSpectrum (cfgMpd cfg) then "spectrum" else "vu" :: Text)])
         ,
             ( "mopidy"
             , object ["host" .= svHost (cfgMopidy cfg), "port" .= svPort (cfgMopidy cfg), "http" .= svHttp (cfgMopidy cfg), "queue" .= svQueue (cfgMopidy cfg), "goodies" .= svGoodies (cfgMopidy cfg), "levels" .= (case (svLevels (cfgMopidy cfg), svSpectrum (cfgMopidy cfg)) of (Nothing, _) -> "off"; (_, True) -> "spectrum"; _ -> "vu" :: Text)]
