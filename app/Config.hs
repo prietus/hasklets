@@ -86,6 +86,9 @@ data Config = Config
     , cfgScale :: Double
     -- ^ Size of the widgets: 1 is the normal size, 1.25 a quarter bigger.
     , cfgCorner :: Corner
+    , cfgOpacity :: Maybe Double
+    -- ^ How opaque the cards are, 0 to 1, in place of the theme's own value:
+    -- lower it for glass cards on a compositor that blurs what is behind.
     , cfgMargin :: Int
     -- ^ Distance from the screen edges.
     , cfgGap :: Int
@@ -114,13 +117,14 @@ instance Eq Config where
       where
         -- In whatever order they were dragged.
         positions c = Map.fromList [(widgetId k, at) | (k, at) <- cfgPositions c]
-        key c = (themeId (cfgTheme c), cfgScale c, cfgCorner c, cfgMargin c, cfgGap c, cfgColumns c, positions c, cfgWeatherSource c, cfgRain c, cfgPlace c, cfgProcessRows c, cfgJournalRows c, cfgMpd c, cfgMopidy c)
+        key c = (themeId (cfgTheme c), (cfgScale c, cfgOpacity c), cfgCorner c, cfgMargin c, cfgGap c, cfgColumns c, positions c, cfgWeatherSource c, cfgRain c, cfgPlace c, cfgProcessRows c, cfgJournalRows c, cfgMpd c, cfgMopidy c)
 
 defaultConfig :: Config
 defaultConfig =
     Config
         { cfgTheme = defaultTheme
         , cfgScale = 1
+        , cfgOpacity = Nothing
         , cfgCorner = TopLeft
         , cfgMargin = 24
         , cfgGap = 14
@@ -140,6 +144,7 @@ instance FromJSON Config where
     parseJSON = withObject "config" $ \o -> do
         theme <- o .:? "theme" >>= maybe (pure (cfgTheme d)) parseTheme
         size <- o .:? "scale" .!= cfgScale d
+        opacity <- o .:? "opacity"
         corner <- o .:? "corner" >>= maybe (pure (cfgCorner d)) parseCorner
         margin <- o .:? "margin" .!= cfgMargin d
         gap <- o .:? "gap" .!= cfgGap d
@@ -174,6 +179,7 @@ instance FromJSON Config where
             Config
                 { cfgTheme = theme
                 , cfgScale = clamp 0.5 3 size
+                , cfgOpacity = clamp 0 1 <$> opacity
                 , cfgCorner = corner
                 , cfgMargin = clamp 0 500 margin
                 , cfgGap = clamp 0 200 gap
@@ -216,13 +222,14 @@ columnsFromIds = filter (not . null) . dedupe [] . map (nub . mapMaybe kind)
 
 -- One field per line, so the file stays easy to edit by hand.
 encodeConfig :: Config -> BL.ByteString
-encodeConfig cfg = "{\n" <> BL.intercalate ",\n" (map field fields) <> "\n}\n"
+encodeConfig cfg = "{\n" <> BL.intercalate ",\n" (map field [f | f@(_, v) <- fields, v /= toJSON (Nothing :: Maybe Double)]) <> "\n}\n"
   where
     field (k, v) = "  " <> encode (k :: Text) <> ": " <> encode v
     place = cfgPlace cfg
     fields =
         [ ("theme", toJSON (themeId (cfgTheme cfg)))
         , ("scale", toJSON (cfgScale cfg))
+        , ("opacity", toJSON (cfgOpacity cfg))
         , ("corner", toJSON (cornerId (cfgCorner cfg)))
         , ("margin", toJSON (cfgMargin cfg))
         , ("gap", toJSON (cfgGap cfg))

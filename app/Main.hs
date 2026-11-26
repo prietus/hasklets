@@ -390,7 +390,8 @@ addWidget sh cfg desk host threads box kind = case kind of
                 Gtk.widgetQueueDraw area
                 pure False
   where
-    th = cfgTheme cfg
+    -- The cards as opaque as the configuration says, if it does.
+    th = let t = cfgTheme cfg in maybe t (\a -> t{cardFill = (fst (cardFill t), a)}) (cfgOpacity cfg)
     k = cfgScale cfg
     canvas = scaledCanvas desk host cfg kind
     -- The grid of card heights depends on the space between cards.

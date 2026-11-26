@@ -91,6 +91,7 @@ configuration is kept.
 | `theme` | `"mocha"` | see [Themes](#themes) |
 | `scale` | `1` | size of the widgets, 0.5 to 3: `1.25` makes them a quarter bigger |
 | `corner` | `"top-left"` | or `"top-right"`, `"bottom-left"`, `"bottom-right"` |
+| `opacity` | the theme's | how opaque the cards are, 0 to 1 (the themes use about 0.92). Lower it, to `0.6` say, for glass cards on a compositor that blurs what is behind them, like [river-fx](https://github.com/prietus/river-fx) |
 | `margin` | `24` | distance from the screen edges, in logical pixels |
 | `gap` | `14` | space between widgets |
 | `columns` | see above | columns from left to right, each a list of `weather`, `forecast`, `system`, `mpris`, `disks`, `processes`, `calendar`, `journal`, `luna`, `mpd`, `mopidy`; a widget that is not listed is hidden |

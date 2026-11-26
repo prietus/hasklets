@@ -270,6 +270,8 @@ settingsWindow app = do
                     , cfgMargin = round marginV
                     , cfgGap = round gapV
                     , cfgScale = sizeV
+                    , -- Only set by hand in the file: kept as it is.
+                      cfgOpacity = cfgOpacity (either (const cfg) id onDisk)
                     , -- The last list holds the hidden widgets.
                       cfgColumns = filter (not . null) (init groups)
                     , cfgPositions = cfgPositions (either (const cfg) id onDisk)
