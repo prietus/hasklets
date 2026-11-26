@@ -172,6 +172,18 @@ settingsWindow app = do
     gridRow mgrid 5 "Mopidy port (web, for covers)" mopidyWeb
     mopidyQueue <- spin 1 10 1 0 (fromIntegral (svQueue (cfgMopidy cfg)))
     gridRow mgrid 6 "Mopidy: songs of the queue listed" mopidyQueue
+    mopidyGoodies <- Gtk.switchNew
+    Gtk.switchSetActive mopidyGoodies (svGoodies (cfgMopidy cfg))
+    Gtk.widgetSetHalign mopidyGoodies Gtk.AlignStart
+    Gtk.widgetSetTooltipText mopidyGoodies (Just "The signal path to the DAC and the pressing of the album, where the server has mopidy-goodies")
+    gridRow mgrid 8 "Mopidy: use mopidy-goodies if present" mopidyGoodies
+    mopidyLevels <- Gtk.dropDownNewFromStrings ["Off", "VU meter", "Spectrum"]
+    Gtk.dropDownSetSelected mopidyLevels $ case (svLevels (cfgMopidy cfg), svSpectrum (cfgMopidy cfg)) of
+        (Nothing, _) -> 0
+        (_, False) -> 1
+        (_, True) -> 2
+    Gtk.widgetSetTooltipText mopidyLevels (Just "From the visualizer feed of mopidy-goodies: the audio comes over the network and the levels are worked out here")
+    gridRow mgrid 9 "Mopidy: meter (mopidy-goodies)" mopidyLevels
 
     -- Calendars. The accounts go to their own file, not to the configuration.
     heading root "Calendars"
@@ -258,6 +270,8 @@ settingsWindow app = do
         mpdQueueV <- Gtk.spinButtonGetValue mpdQueue
         mpdLevelsV <- round <$> Gtk.spinButtonGetValue mpdLevels
         mopidyQueueV <- Gtk.spinButtonGetValue mopidyQueue
+        mopidyGoodiesV <- Gtk.switchGetActive mopidyGoodies
+        mopidyLevelsV <- Gtk.dropDownGetSelected mopidyLevels
         sourceIx <- Gtk.dropDownGetSelected provider'
         rainV <- Gtk.switchGetActive rain
         serverV <- T.strip <$> Gtk.editableGetText server
@@ -280,8 +294,8 @@ settingsWindow app = do
                     , cfgPlace = Place (T.unpack (T.strip nameV)) latV lonV
                     , cfgProcessRows = round rowsV
                     , cfgJournalRows = round messagesV
-                    , cfgMpd = Server mpdHostV (round mpdPortV) Nothing (round mpdQueueV) (if mpdLevelsV > 0 then Just mpdLevelsV else Nothing)
-                    , cfgMopidy = Server mopidyHostV (round mopidyPortV) (Just (round mopidyWebV)) (round mopidyQueueV) Nothing
+                    , cfgMpd = Server mpdHostV (round mpdPortV) Nothing (round mpdQueueV) (if mpdLevelsV > 0 then Just mpdLevelsV else Nothing) False False
+                    , cfgMopidy = Server mopidyHostV (round mopidyPortV) (Just (round mopidyWebV)) (round mopidyQueueV) (if mopidyLevelsV > 0 then Just (round mopidyWebV) else Nothing) (mopidyLevelsV == 2) mopidyGoodiesV
                     }
         saved <- try $ do
             saveConfig new

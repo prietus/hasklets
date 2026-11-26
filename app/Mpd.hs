@@ -22,12 +22,15 @@ import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, bracket, finally, throwIO, try)
 import Control.Monad (filterM, forM_, forever, unless, void, when, zipWithM_)
 import Data.Aeson (Value (..), decodeStrict, encode, object, (.=))
+import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KM
+import Data.Bits (shiftL, testBit, (.&.), (.|.))
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BC
 import Data.ByteString.Lazy qualified as BL
 import Data.Char (isAlphaNum, toUpper)
+import Data.Complex (Complex (..), cis, magnitude)
 import Data.Foldable (toList)
 import Data.List (find)
 import Data.Maybe (fromMaybe, isJust, listToMaybe, mapMaybe)
@@ -59,6 +62,14 @@ data Server = Server
     , svLevels :: Maybe Int
     -- ^ The port of an mpdvu (https://github.com/prietus/mpdvu) next to the
     -- server, which says how loud each channel is; 'Nothing' for no meter.
+    , svSpectrum :: Bool
+    -- ^ Whether the meter is a spectrum, a bar for each band of frequencies,
+    -- instead of the level of each channel. Only where the audio itself
+    -- comes (the visualizer feed of mopidy-goodies).
+    , svGoodies :: Bool
+    -- ^ Whether to use mopidy-goodies (https://github.com/prietus/mopidy-goodies)
+    -- where the Mopidy server has it: it knows what really reaches the DAC
+    -- and how the album was pressed.
     }
     deriving (Eq, Ord)
 
@@ -75,6 +86,9 @@ data Player = Player
     -- ^ When and by whom it was released, as far as the tags say.
     , pFormat :: Text
     -- ^ What is going to the outputs: "FLAC · 96 kHz · 24 bit · 2890 kbps".
+    , pSource :: Text
+    -- ^ Where the song comes from when it is not the server's own files:
+    -- "TIDAL", "SPOTIFY", "STREAM"... Empty for its own files.
     , pElapsed :: Double
     , pDuration :: Double
     , pPlace :: Maybe (Int, Int)
@@ -89,6 +103,8 @@ data Player = Player
     , pLibrary :: Text
     -- ^ How much music the server has, to say when nothing plays.
     , pArt :: Maybe GdkPixbuf.Pixbuf
+    , pBitPerfect :: Maybe Bool
+    -- ^ Whether the audio reaches the DAC untouched, where the server can tell.
     }
 
 -- | A song waiting in the queue: its place in it, its title and its length.
@@ -197,15 +213,18 @@ picture c file = do
                     _ <- line c
                     pure ((,bytes) <$> size)
                 | otherwise -> chunk size
-    exactly n = go' n []
-      where
-        Conn _ input _ = c
-        go' 0 parts = pure (BS.concat (reverse parts))
-        go' left parts = do
-            got <- Gio.inputStreamReadBytes input (fromIntegral left) noCancel >>= GLib.bytesGetData
-            case got of
-                Just bytes | not (BS.null bytes) -> go' (left - BS.length bytes) (bytes : parts)
-                _ -> throwIO (userError "the server closed the connection")
+    exactly = readExactly c
+
+-- | This many bytes from the server, however many pieces they come in.
+readExactly :: Conn -> Int -> IO ByteString
+readExactly (Conn _ input _) n = go n []
+  where
+    go 0 parts = pure (BS.concat (reverse parts))
+    go left parts = do
+        got <- Gio.inputStreamReadBytes input (fromIntegral left) noCancel >>= GLib.bytesGetData
+        case got of
+            Just bytes | not (BS.null bytes) -> go (left - BS.length bytes) (bytes : parts)
+            _ -> throwIO (userError "the server closed the connection")
 
 -- Data ----------------------------------------------------------------------
 
@@ -224,9 +243,12 @@ mpdLoop sv publish = forever $ do
     session c = do
         -- Larger pieces for the pictures, where the server knows how.
         _ <- ask c "binarylimit 262144"
-        go c Nothing
-    -- cache: the file of the last cover and its image.
-    go c cache = do
+        extras <- goodiesFeatures sv
+        go c extras (0 :: Int) Nothing noPath ("", "")
+    -- cache: the file of the last cover and its image. The rest is what
+    -- mopidy-goodies said last: the path of the signal, asked every few
+    -- turns, and the pressing of the album, asked once for each album.
+    go c extras turn cache path pressing = do
         info <- fromMaybe [] <$> ask c "status"
         song <- fromMaybe [] <$> ask c "currentsong"
         -- The songs after this one, or from the start when none is current.
@@ -240,10 +262,101 @@ mpdLoop sv publish = forever $ do
             Just (old, _) | old == file -> pure cache
             _ | T.null file -> pure Nothing
             _ -> Just . (file,) <$> cover sv c file
-        let player = (playerFrom info song){pQueue = queue, pOutputs = enabled outputs, pLibrary = library, pArt = cache' >>= snd}
+        path' <-
+            if "audio" `elem` extras && turn `mod` 3 == 0
+                then signalPath sv
+                else pure path
+        let album = fromMaybe "" (lookup "x-albumuri" song)
+        pressing' <-
+            if "local_metadata" `elem` extras && "local:album:" `T.isPrefixOf` album && album /= fst pressing
+                then (album,) <$> albumPressing sv album
+                else pure pressing
+        let base = playerFrom info song
+            Signal sound dac verdict = path'
+            player =
+                base
+                    { pQueue = queue
+                    , pOutputs = if T.null dac then enabled outputs else dac
+                    , pLibrary = library
+                    , pArt = cache' >>= snd
+                    , -- What the DAC is getting says more than the tags of the file.
+                      pFormat = if T.null sound then pFormat base else T.intercalate " · " (filter (not . T.null) [T.takeWhile (/= ' ') (pFormat base), sound])
+                    , pEdition = if T.null (pEdition base) && fst pressing' == album then snd pressing' else pEdition base
+                    , pBitPerfect = verdict
+                    }
         publish (Right player)
         threadDelay (if pState player == Playing then 1000000 else 3000000)
-        go c cache'
+        go c extras (turn + 1) cache' path' pressing'
+
+-- mopidy-goodies ------------------------------------------------------------
+
+-- | What reaches the DAC right now: its format, the name of the card and
+-- whether the signal gets there untouched.
+data Signal = Signal Text Text (Maybe Bool)
+
+noPath :: Signal
+noPath = Signal "" "" Nothing
+
+-- | An answer of the web API of a Mopidy server, as JSON, or nothing.
+goodies :: Server -> String -> [String] -> IO (Maybe Value)
+goodies sv route query = case svHttp sv of
+    Just port | svGoodies sv -> do
+        let url = "http://" <> T.unpack (svHost sv) <> ":" <> show port <> "/goodies/" <> route
+        answer <- try (readProcessWithExitCode "curl" (["-fsS", "--max-time", "6", "-G"] <> concatMap (\q -> ["--data-urlencode", q]) query <> [url]) "")
+        pure $ case answer of
+            Right (ExitSuccess, out, _) -> decodeStrict (encodeUtf8 (T.pack out))
+            Right _ -> Nothing
+            Left (_ :: SomeException) -> Nothing
+    _ -> pure Nothing
+
+-- | A value inside nested objects.
+inside :: [Text] -> Value -> Maybe Value
+inside [] v = Just v
+inside (key : rest) (Object o) = KM.lookup (Key.fromText key) o >>= inside rest
+inside _ _ = Nothing
+
+-- | The features a server says it has, or none when it has no mopidy-goodies
+-- or it is not to be used.
+goodiesFeatures :: Server -> IO [Text]
+goodiesFeatures sv = do
+    health <- goodies sv "_health" []
+    pure $ case health >>= inside ["features"] of
+        Just (Object features) -> [Key.toText key | (key, Bool True) <- KM.toList features]
+        _ -> []
+
+signalPath :: Server -> IO Signal
+signalPath sv = do
+    answer <- goodies sv "audio/active" []
+    pure $ case answer of
+        Nothing -> noPath
+        Just v ->
+            let text keys = case inside keys v of
+                    Just (String t) -> t
+                    _ -> ""
+                number keys = case inside keys v of
+                    Just (Number n) -> Just (realToFrac n :: Double)
+                    _ -> Nothing
+                khz hz = let k = hz / 1000 in if k == fromIntegral (round k :: Int) then show (round k :: Int) else show k
+                sound = case (number ["format", "rate"], number ["format", "bits"]) of
+                    (Just rate, Just bits)
+                        | "DSD" `T.isPrefixOf` text ["format", "alsa_format"] -> T.pack ("DSD · " <> khz rate <> " kHz")
+                        | otherwise -> T.pack (khz rate <> " kHz · " <> show (round bits :: Int) <> " bit")
+                    _ -> ""
+                dac = if T.null (text ["output", "card", "name"]) then text ["output", "device"] else text ["output", "card", "name"]
+                verdict = case text ["chain", "verdict"] of
+                    "bit-perfect" -> Just True
+                    "not-bit-perfect" -> Just False
+                    _ -> Nothing
+             in Signal sound dac verdict
+
+-- | "Sony · SICP-1704 · JP": the label, the catalogue number and the
+-- country of an album of the server's own files, from their tags.
+albumPressing :: Server -> Text -> IO Text
+albumPressing sv album = do
+    answer <- goodies sv "local/album" ["uri=" <> T.unpack album]
+    pure $ case answer of
+        Nothing -> ""
+        Just v -> T.intercalate " · " [t | key <- ["label", "catalog_number", "country"], Just (String t) <- [inside ["edition", key] v], not (T.null t)]
 
 -- | The names of the outputs that are switched on.
 enabled :: [(Text, Text)] -> Text
@@ -260,8 +373,15 @@ entries fields = case break ((== "file") . fst) (drop 1 fields) of
     (rest, more) ->
         let song = take 1 fields <> rest
             place = fromMaybe 0 (lookup "pos" song >>= readMaybe . T.unpack)
-            long = fromMaybe 0 (lookup "duration" song >>= readMaybe . T.unpack)
+            long = songLength song
          in Entry place (title song) long : entries more
+
+-- | How long a song is, in seconds: "duration", or the whole seconds of
+-- "time" where that is all there is (Mopidy), or 0 when it does not say.
+songLength :: [(Text, Text)] -> Double
+songLength song = case [n | key <- ["duration", "time"], Just n <- [lookup key song >>= readMaybe . T.unpack], n > 0] of
+    long : _ -> long
+    [] -> 0
 
 -- | "1,204 albums · 15,870 songs", or nothing when the server does not count them.
 libraryText :: [(Text, Text)] -> Text
@@ -288,8 +408,13 @@ playerFrom info song =
         , pAlbum = get song "album"
         , pEdition = edition
         , pFormat = T.intercalate " · " (filter (not . T.null) [codec, sound, bitrate])
+        , pSource = source
         , pElapsed = number (get info "elapsed")
-        , pDuration = number (if T.null (get info "duration") then get song "duration" else get info "duration")
+        , -- The server says how long the song is, or the song itself does, or
+          -- (Mopidy) only the old "time: elapsed:total" of the server does.
+          pDuration = case filter (> 0) [number (get info "duration"), songLength song, number (T.takeWhileEnd (/= ':') (get info "time"))] of
+            long : _ -> long
+            [] -> 0
         , pPlace = (,) . (+ 1) <$> whole (get info "song") <*> whole (get info "playlistlength")
         , pQueue = []
         , pOutputs = ""
@@ -298,6 +423,7 @@ playerFrom info song =
         , pVolume = find (>= 0) (whole (get info "volume"))
         , pLibrary = ""
         , pArt = Nothing
+        , pBitPerfect = Nothing
         }
   where
     get fields key = fromMaybe "" (lookup key fields)
@@ -314,6 +440,15 @@ playerFrom info song =
                 , get song "label"
                 , if T.null first || T.null this || first == this then "" else this <> " edition"
                 ]
+    -- Mopidy names its songs with the service they come from in front:
+    -- "tidal:track:123", "local:track:...". A real MPD has paths, or the
+    -- address of a stream.
+    source = case T.breakOn ":" (get song "file") of
+        (scheme, rest)
+            | T.null rest || T.any (== '/') scheme || T.null scheme -> ""
+            | scheme `elem` ["local", "file", "m3u"] -> ""
+            | scheme `elem` ["http", "https", "rtmp", "rtmps", "rtsp", "mms"] -> "STREAM"
+            | otherwise -> T.toUpper scheme
     -- The kind of file, from its name, when it looks like one.
     codec =
         let ext = T.takeWhileEnd (/= '.') (get song "file")
@@ -430,16 +565,88 @@ mpdSend sv state order = forM_ command $ \text ->
 -- | How loud each channel is: its peak and its RMS level, from 0 to 1.
 type Levels = [(Double, Double)]
 
-{- | Subscribes to an mpdvu on the server and hands @publish@ the levels as
-they come, many times a second, with needles that fall little by little
-instead of jumping down. An empty list means there is nothing to show.
+{- | Hands @publish@ the levels of what the server plays as they come, many
+times a second, with needles that fall little by little instead of jumping
+down. An empty list means there is nothing to show.
+
+For an MPD they come from an mpdvu on the server, already worked out. For a
+Mopidy they are worked out here, from the audio that the visualizer feed of
+mopidy-goodies sends over a WebSocket on the port of its web API.
 -}
 levelsLoop :: Server -> Int -> (Levels -> IO ()) -> IO ()
 levelsLoop sv port publish = forever $ do
-    _ <- try session :: IO (Either SomeException ())
+    _ <- try (if isJust (svHttp sv) then feed else session) :: IO (Either SomeException ())
     publish []
     threadDelay 5000000
   where
+    -- The WebSocket of mopidy-goodies: an HTTP request that is answered
+    -- with "101", and from then on messages, each with a short header.
+    feed = do
+        client <- Gio.socketClientNew
+        Gio.socketClientSetTimeout client 8
+        conn <- Gio.socketClientConnectToHost client (svHost sv) (fromIntegral port) noCancel
+        input <- Gio.iOStreamGetInputStream conn >>= Gio.dataInputStreamNew
+        output <- Gio.iOStreamGetOutputStream conn
+        let c = Conn conn input output
+            shake = do
+                say c . BC.pack $
+                    "GET /goodies/audio/visualizer HTTP/1.1\r\nHost: "
+                        <> T.unpack (svHost sv)
+                        <> ":"
+                        <> show port
+                        <> "\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: aGFza2xldHMtdnVtZXRlcg==\r\nSec-WebSocket-Version: 13\r\n\r"
+                answer <- line c
+                unless (" 101" `BS.isInfixOf` answer) (throwIO (userError "no visualizer feed"))
+                headers
+            headers = do
+                l <- line c
+                unless (BS.null (BC.filter (/= '\r') l)) headers
+        (shake >> messages c BS.empty [] []) `finally` close c
+    -- pending: audio not metered yet. heard: the last samples, for the spectrum.
+    messages c pending shown heard = do
+        header <- readExactly c 2
+        let kind = BS.index header 0 .&. 0x0f
+            short = fromIntegral (BS.index header 1 .&. 0x7f) :: Int
+            number = BS.foldl' (\n b -> n `shiftL` 8 .|. fromIntegral b) (0 :: Int)
+        size <- case short of
+            126 -> number <$> readExactly c 2
+            127 -> number <$> readExactly c 8
+            n -> pure n
+        when (size > 4000000) (throwIO (userError "a message too large"))
+        -- A server does not mask what it sends, but the header says.
+        _ <- if testBit (BS.index header 1) 7 then readExactly c 4 else pure BS.empty
+        payload <- readExactly c size
+        case kind of
+            -- Audio: signed 16 bits, little endian, two channels at 44.1 kHz.
+            2 -> do
+                (rest, shown', heard') <- meter (pending <> payload) shown heard
+                messages c rest shown' heard'
+            8 -> pure ()
+            -- A ping is answered with the same bytes (masked with zeros,
+            -- which leaves them as they are).
+            9 -> do
+                let Conn _ _ output = c
+                void (Gio.outputStreamWriteAll output (BS.pack [0x8a, 0x80 .|. fromIntegral (min 125 size), 0, 0, 0, 0] <> BS.take 125 payload) noCancel)
+                messages c pending shown heard
+            _ -> messages c pending shown heard
+    -- A level for every 40 ms of audio there is; what is left over waits
+    -- for the next message.
+    meter audio shown heard
+        | BS.length audio < window = pure (audio, shown, heard)
+        | otherwise = do
+            let piece = BS.take window audio
+                -- The spectrum looks at more audio than one step brings.
+                heard' = if svSpectrum sv then lastN spectrumWindow (heard <> pcmMono piece) else []
+                fresh
+                    | not (svSpectrum sv) = pcmLevels piece
+                    | length heard' == spectrumWindow = spectrumBands heard'
+                    | otherwise = []
+                shown' = settle shown fresh
+            when (shown' /= shown) (publish shown')
+            -- The samples too, so they do not hold on to the audio they are from.
+            foldr seq () heard' `seq` meter (BS.copy (BS.drop window audio)) shown' heard'
+    lastN n xs = drop (length xs - n) xs
+    window = 1764 * 4
     session = do
         resolver <- Gio.resolverGetDefault
         found <- Gio.resolverLookupByName resolver (svHost sv) noCancel
@@ -469,11 +676,77 @@ levelsLoop sv port publish = forever $ do
         _ -> Nothing
     pairs (peak : rms : rest) = (peak, rms) : pairs rest
     pairs _ = []
-    -- A level goes up at once and comes down a step at a time.
+    -- A level goes up at once and comes down a step at a time. The numbers
+    -- are worked out here and now: left for whoever draws them, each would
+    -- keep alive the audio and the levels it comes from, and when the card
+    -- is covered and nothing draws it they would pile up without end.
     settle shown fresh
         | all (== (0, 0)) fresh = fresh
-        | otherwise = zipWith fall (shown <> repeat (0, 0)) fresh
+        | otherwise = worked (zipWith fall (shown <> repeat (0, 0)) fresh)
     fall (peak0, rms0) (peak, rms) = (max peak (peak0 - 0.012), max rms (rms0 * 0.82))
+    worked levels = foldr (\(a, b) rest -> a `seq` b `seq` rest) () levels `seq` levels
+
+-- | Peak and RMS of the two channels of a piece of audio: signed 16 bits,
+-- little endian, left and right in turn.
+pcmLevels :: ByteString -> Levels
+pcmLevels audio = [channel 0, channel 2]
+  where
+    frames = BS.length audio `div` 4
+    sample at =
+        let v = fromIntegral (BS.index audio at) + 256 * fromIntegral (BS.index audio (at + 1)) :: Int
+         in fromIntegral (if v >= 32768 then v - 65536 else v) / 32768 :: Double
+    channel offset =
+        let values = [sample (4 * i + offset) | i <- [0 .. frames - 1]]
+         in (maximum (0 : map abs values), sqrt (sum (map (\v -> v * v) values) / fromIntegral (max 1 frames)))
+
+-- | The two channels of a piece of that audio mixed into one, from -1 to 1.
+pcmMono :: ByteString -> [Double]
+pcmMono audio = [(sample (4 * i) + sample (4 * i + 2)) / 2 | i <- [0 .. BS.length audio `div` 4 - 1]]
+  where
+    sample at =
+        let v = fromIntegral (BS.index audio at) + 256 * fromIntegral (BS.index audio (at + 1)) :: Int
+         in fromIntegral (if v >= 32768 then v - 65536 else v) / 32768
+
+-- | Samples the spectrum is worked out from: a power of two, some 46 ms.
+spectrumWindow :: Int
+spectrumWindow = 2048
+
+-- | Bars of the spectrum.
+spectrumBars :: Int
+spectrumBars = 28
+
+{- | How loud each band of frequencies is in that many samples at 44.1 kHz,
+from 0 to 1 on a scale of decibels: bands as wide as each other to the ear,
+from 45 Hz to 16 kHz. Each comes twice, to be read like a level (the first
+is held a little as a peak).
+-}
+spectrumBands :: [Double] -> Levels
+spectrumBands samples = [(v, v) | v <- map band [0 .. spectrumBars - 1]]
+  where
+    n = spectrumWindow
+    -- The ends are faded out, so the cut does not sound like a click.
+    faded = [x * (0.5 - 0.5 * cos (2 * pi * fromIntegral i / fromIntegral (n - 1))) :+ 0 | (i, x) <- zip [0 :: Int ..] samples]
+    -- How loud a tone at each frequency is, from 0 to 1.
+    loud = map ((* (4 / fromIntegral n)) . magnitude) (take (n `div` 2) (fft faded))
+    hz = 44100 / fromIntegral n :: Double
+    edge j = 45 * (16000 / 45) ** (fromIntegral j / fromIntegral spectrumBars) :: Double
+    band j =
+        let lo = max 1 (floor (edge j / hz)) :: Int
+            hi = max (lo + 1) (floor (edge (j + 1) / hz))
+            top = maximum (1e-7 : take (hi - lo) (drop lo loud))
+         in -- From -54 dB at the bottom to -6 dB at the top.
+            max 0 (min 1 ((20 * logBase 10 top + 54) / 48))
+
+-- | The frequencies in a number of samples that is a power of two.
+fft :: [Complex Double] -> [Complex Double]
+fft [x] = [x]
+fft xs = zipWith (+) evens turned <> zipWith (-) evens turned
+  where
+    n = length xs
+    (evens, odds) = (fft (every xs), fft (every (drop 1 xs)))
+    every (a : rest) = a : every (drop 1 rest)
+    every [] = []
+    turned = [cis (-2 * pi * fromIntegral k / fromIntegral n) * o | (k, o) <- zip [0 :: Int ..] odds]
 
 -- Drawing -------------------------------------------------------------------
 
@@ -502,7 +775,13 @@ controlsY sv = 224 + metersRoom sv
 queueY sv = 258 + metersRoom sv
 
 metersRoom :: Server -> Double
-metersRoom sv = if isJust (svLevels sv) then 30 else 0
+metersRoom sv
+    | isJust (svLevels sv) = metersTall sv + 10
+    | otherwise = 0
+
+-- | How tall the meters are: the spectrum needs more room for its bars.
+metersTall :: Server -> Double
+metersTall sv = if svSpectrum sv then 36 else 20
 
 buttons :: [(Action, Double)]
 buttons = [(Previous, cardWidth / 2 - 46), (PlayPause, cardWidth / 2), (Next, cardWidth / 2 + 46)]
@@ -543,12 +822,26 @@ renderMpd th gap sv name levels state = do
         Nothing -> note "Loading…"
         Just (Left problem) -> note problem
         Just (Right p) -> do
-            -- Where the sound is going, and how loud.
+            -- Where the sound is going, and how loud; and at the very end,
+            -- whether it gets there untouched, where the server can tell.
             nameExt <- textExtents name
+            let (verdict, color) = case pBitPerfect p of
+                    Just True -> ("bit-perfect", okColor th)
+                    Just False -> ("not bit-perfect", warnColor th)
+                    Nothing -> ("", okColor th)
+            font th FontWeightNormal 11
+            verdictExt <- textExtents verdict
+            let taken = if null verdict then 0 else textExtentsXadvance verdictExt + 16
+            unless (null verdict) $ do
+                rgba color 1
+                rightAligned (w - pad) 30 verdict
+                newPath
+                arc (w - pad - textExtentsXadvance verdictExt - 7) 26 2.8 0 (2 * pi)
+                fill
             dim th
-            let outW = wide - textExtentsXadvance nameExt - 14
+            let outW = wide - textExtentsXadvance nameExt - 14 - taken
                 loud = maybe "" (\v -> T.pack (show v) <> " % · ") (pVolume p)
-            rightText th (w - pad) 17 outW 11 (loud <> pOutputs p)
+            rightText th (w - pad - taken) 17 outW 11 (loud <> pOutputs p)
 
             let art = Rect pad 44 92 92
                 left = pad + 92 + 14
@@ -573,8 +866,25 @@ renderMpd th gap sv name levels state = do
             dim th
             rightAligned (w - pad) 162 place
             placeExt <- textExtents place
+            -- In front, a badge with the service the song comes from.
+            badge <-
+                if T.null (pSource p)
+                    then pure 0
+                    else do
+                        let label = T.unpack (pSource p)
+                        font th FontWeightBold 9
+                        labelExt <- textExtents label
+                        let badgeW = textExtentsXadvance labelExt + 12
+                        roundRect (Rect pad 149.5 badgeW 15) 7.5
+                        rgba (accentColor th) 1
+                        fill
+                        -- The letters are cut out of it, in the color of the card.
+                        setColor (fst (cardFill th), 1)
+                        moveTo (pad + 6) 160.3
+                        showText label
+                        pure (badgeW + 7)
             rgba (accentColor th) 1
-            pangoLine th pad 150 (wide - textExtentsXadvance placeExt - 12) 11.5 True (pFormat p)
+            pangoLine th (pad + badge) 150 (wide - badge - textExtentsXadvance placeExt - 12) 11.5 True (pFormat p)
 
             -- How far into the song.
             let frac = if pDuration p > 0 then max 0 (min 1 (pElapsed p / pDuration p)) else 0
@@ -591,7 +901,8 @@ renderMpd th gap sv name levels state = do
                 showText (clock (pElapsed p))
                 rightAligned (w - pad) 199 (clock (pDuration p))
 
-            when (isJust (svLevels sv)) (meters th (Rect pad metersY wide 20) levels)
+            when (isJust (svLevels sv)) $
+                (if svSpectrum sv then spectrum else meters) th (Rect pad metersY wide (metersTall sv)) levels
 
             ink th
             transport (controlsY sv) (pState p == Playing) buttons
@@ -658,6 +969,23 @@ meters th (Rect x y w h) levels = forM_ (zip [0 :: Int ..] channels) $ \(row, (l
     channels = zip ["L", "R"] (take 2 (levels <> repeat (0, 0)))
     -- From 0 to 1 along the meter: -42 dB at the left end, 0 dB at the right.
     position v = max 0 (min 1 (1 + 20 * logBase 10 (max 1e-6 v) / 42))
+
+-- | The spectrum: a bar for each band, low notes on the left, with a mark
+-- where each one was a moment ago.
+spectrum :: Theme -> Rect -> Levels -> Render ()
+spectrum th (Rect x y w h) levels = forM_ (zip [0 :: Int ..] bands) $ \(i, (held, now)) -> do
+    let slot = w / fromIntegral spectrumBars
+        left = x + slot * fromIntegral i
+        tall v = max 1.5 (h * v)
+    rgba (accentColor th) 1
+    rectangle left (y + h - tall now) (slot - 1.5) (tall now)
+    fill
+    when (held > now + 0.03) $ do
+        dim th
+        rectangle left (y + h - tall held) (slot - 1.5) 1.2
+        fill
+  where
+    bands = take spectrumBars (levels <> repeat (0, 0))
 
 -- | Two arrows that cross, centered on a point, in the current color.
 shuffleSign :: Double -> Double -> Render ()

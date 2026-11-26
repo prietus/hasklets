@@ -135,8 +135,8 @@ defaultConfig =
         , cfgPlace = Place{placeName = "Madrid", placeLat = 40.42, placeLon = -3.70}
         , cfgProcessRows = 5
         , cfgJournalRows = 4
-        , cfgMpd = Server "localhost" 6600 Nothing 1 Nothing
-        , cfgMopidy = Server "localhost" 6600 (Just 6680) 1 Nothing
+        , cfgMpd = Server "localhost" 6600 Nothing 1 Nothing False False
+        , cfgMopidy = Server "localhost" 6600 (Just 6680) 1 Nothing False True
         }
 
 -- Missing fields take their default value.
@@ -174,6 +174,13 @@ instance FromJSON Config where
         mopidyPort <- mopidy .:? "port" .!= svPort (cfgMopidy d)
         mopidyWeb <- mopidy .:? "http" .!= 6680
         mopidyQueue <- mopidy .:? "queue" .!= svQueue (cfgMopidy d)
+        mopidyGoodies <- mopidy .:? "goodies" .!= svGoodies (cfgMopidy d)
+        -- "off", "vu" or "spectrum"; true, as it was before, is the VU meter.
+        mopidyMeter <- mopidy .:? "levels" .!= Bool False
+        mopidyLevels <- case mopidyMeter of
+            Bool on -> pure (if on then "vu" else "off")
+            String t | t `elem` ["off", "vu", "spectrum"] -> pure t
+            _ -> fail "mopidy.levels is \"off\", \"vu\" or \"spectrum\""
         messages <- journal .:? "rows" .!= cfgJournalRows d
         pure
             Config
@@ -194,8 +201,8 @@ instance FromJSON Config where
                 , cfgPlace = Place name (clamp (-90) 90 lat) (clamp (-180) 180 lon)
                 , cfgProcessRows = clamp 1 10 rows
                 , cfgJournalRows = clamp 1 8 messages
-                , cfgMpd = Server mpdHost (clamp 1 65535 mpdPort) Nothing (clamp 1 10 mpdQueue) (if mpdLevels > 0 then Just (clamp 1 65535 mpdLevels) else Nothing)
-                , cfgMopidy = Server mopidyHost (clamp 1 65535 mopidyPort) (Just (clamp 1 65535 mopidyWeb)) (clamp 1 10 mopidyQueue) Nothing
+                , cfgMpd = Server mpdHost (clamp 1 65535 mpdPort) Nothing (clamp 1 10 mpdQueue) (if mpdLevels > 0 then Just (clamp 1 65535 mpdLevels) else Nothing) False False
+                , cfgMopidy = Server mopidyHost (clamp 1 65535 mopidyPort) (Just (clamp 1 65535 mopidyWeb)) (clamp 1 10 mopidyQueue) (if mopidyLevels /= ("off" :: Text) then Just (clamp 1 65535 mopidyWeb) else Nothing) (mopidyLevels == "spectrum") mopidyGoodies
                 }
       where
         d = defaultConfig
@@ -249,7 +256,7 @@ encodeConfig cfg = "{\n" <> BL.intercalate ",\n" (map field [f | f@(_, v) <- fie
         , ("mpd", object ["host" .= svHost (cfgMpd cfg), "port" .= svPort (cfgMpd cfg), "queue" .= svQueue (cfgMpd cfg), "levels" .= maybe 0 id (svLevels (cfgMpd cfg))])
         ,
             ( "mopidy"
-            , object ["host" .= svHost (cfgMopidy cfg), "port" .= svPort (cfgMopidy cfg), "http" .= svHttp (cfgMopidy cfg), "queue" .= svQueue (cfgMopidy cfg)]
+            , object ["host" .= svHost (cfgMopidy cfg), "port" .= svPort (cfgMopidy cfg), "http" .= svHttp (cfgMopidy cfg), "queue" .= svQueue (cfgMopidy cfg), "goodies" .= svGoodies (cfgMopidy cfg), "levels" .= (case (svLevels (cfgMopidy cfg), svSpectrum (cfgMopidy cfg)) of (Nothing, _) -> "off"; (_, True) -> "spectrum"; _ -> "vu" :: Text)]
             )
         ]
 
