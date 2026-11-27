@@ -454,4 +454,12 @@ spin lo hi step digits value = do
     s <- Gtk.spinButtonNewWithRange lo hi step
     when (digits > 0) $ Gtk.spinButtonSetDigits s (fromIntegral digits)
     Gtk.spinButtonSetValue s value
+    -- The wheel must scroll the window, not change the number that happens
+    -- to be under the pointer: that edited values nobody meant to touch.
+    controllers <- Gtk.widgetObserveControllers s
+    count <- Gio.listModelGetNItems controllers
+    forM_ [0 .. count - 1] $ \i -> do
+        item <- Gio.listModelGetItem controllers i
+        scroll <- maybe (pure Nothing) (GObject.castTo Gtk.EventControllerScroll) item
+        forM_ scroll (`Gtk.eventControllerSetPropagationPhase` Gtk.PropagationPhaseNone)
     pure s
