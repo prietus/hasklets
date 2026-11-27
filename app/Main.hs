@@ -8,8 +8,8 @@
 module Main (main) where
 
 import Control.Concurrent (ThreadId, forkIO, killThread)
-import Control.Monad (forM, forM_, join, unless, void, when)
-import Data.Maybe (isJust, isNothing)
+import Control.Monad (foldM_, forM, forM_, join, unless, void, when)
+import Data.Maybe (catMaybes, isJust, isNothing)
 import Data.GI.Base (touchManagedPtr)
 import Data.IORef
 import Data.Sequence (Seq, (|>))
@@ -276,22 +276,65 @@ build app win layered sh current cfg = do
     threads <- newIORef []
     desk <- Desk app layered <$> newIORef [] <*> newIORef (const (pure ())) <*> newIORef True
     let margin = fromIntegral (cfgMargin cfg)
-    cols <- forM inColumns $ \kinds -> do
+    cols <- forM (if layered then [] else inColumns) $ \kinds -> do
         col <- Gtk.boxNew Gtk.OrientationVertical gap
         Gtk.widgetSetValign col valign
         Gtk.boxAppend columns col
         forM_ kinds (addWidget sh cfg desk (Host win (margin, margin) False) threads col)
         pure col
+    -- Under layer-shell each card of a column has a surface of its own too,
+    -- stacked by hand. A compositor that decorates layer surfaces (shadow,
+    -- blur, rounded corners) then decorates each card, not one box around
+    -- all of them.
+    let -- Distances are counted from the corner, so the order follows it.
+        towards near edge = if edge == near then id else reverse
+        ordered = towards LS.EdgeLeft horizontal (map (towards LS.EdgeTop vertical) inColumns)
+        step = round (cfgScale cfg * cardWidth) + gap
+    stacks <- fmap (filter (not . null)) . forM (if layered then ordered else []) $ \kinds ->
+        fmap catMaybes . forM kinds $ \kind -> do
+            own <- floating app (cfgCorner cfg) LS.LayerBottom (cfgMargin cfg, cfgMargin cfg)
+            box <- Gtk.boxNew Gtk.OrientationVertical 0
+            Gtk.windowSetChild own (Just box)
+            addWidget sh cfg desk (Host own (margin, margin) True) threads box kind
+            modifyIORef (dkWindows desk) (own :)
+            -- A widget that cannot be shown (no media player bus) adds nothing.
+            child <- Gtk.widgetGetFirstChild box
+            area <- maybe (pure Nothing) (Gtk.castTo Gtk.DrawingArea) child
+            pure ((,,) kind own <$> area)
+    let -- Puts every card still in its column under the one before. Cards
+        -- dragged away since have left their window and are skipped.
+        arrange = do
+            alive <- readIORef (dkAlive desk)
+            placed <- map fst . cfgPositions <$> readIORef current
+            when alive . forM_ (zip [0 :: Int ..] stacks) $ \(i, cards) ->
+                foldM_
+                    ( \y (kind, own, area) ->
+                        if kind `elem` placed
+                            then pure y
+                            else do
+                                h <- Gtk.drawingAreaGetContentHeight area
+                                LS.setMargin own horizontal (fromIntegral (cfgMargin cfg + i * fromIntegral step))
+                                LS.setMargin own vertical y
+                                pure (y + h + gap)
+                    )
+                    (fromIntegral (cfgMargin cfg))
+                    cards
+    arrange
+    forM_ (concat stacks) $ \(_, own, area) -> do
+        Gtk.windowPresent own
+        -- Some cards change height with what they show.
+        void (Gtk.onDrawingAreaResize area (\_ _ -> void (GLib.idleAdd GLib.PRIORITY_DEFAULT (arrange >> pure False))))
     -- When a card is dragged out of its column: the configuration in use
     -- now has it placed, and a column or a window left empty is hidden.
     writeIORef (dkLeft desk) $ \positions -> do
         modifyIORef current (\c -> c{cfgPositions = positions})
+        arrange
         empty <- forM cols (fmap isNothing . Gtk.widgetGetFirstChild)
         forM_ (zip cols empty) $ \(col, none) -> when none (Gtk.widgetSetVisible col False)
         when (and empty) (Gtk.widgetSetVisible win False)
 
     -- With no widgets there is nothing to show.
-    if null inColumns
+    if layered || null inColumns
         then Gtk.widgetSetVisible win False
         else Gtk.windowPresent win
 
@@ -524,7 +567,13 @@ floating app corner layer (x, y) = do
 
 spot :: Config -> IORef Host -> Gtk.DrawingArea -> IO Spot
 spot cfg home area = do
-    Host win (mx, my) _ <- readIORef home
+    Host win at own <- readIORef home
+    let (vertical, horizontal) = cornerEdges (cfgCorner cfg)
+    -- A card with a window of its own may have been moved since.
+    (mx, my) <-
+        if own
+            then (,) <$> (fromIntegral <$> LS.getMargin win horizontal) <*> (fromIntegral <$> LS.getMargin win vertical)
+            else pure at
     origin <- Graphene.pointZero
     (_, corner) <- Gtk.widgetComputePoint area win origin
     x <- realToFrac <$> Graphene.getPointX corner
@@ -533,7 +582,6 @@ spot cfg home area = do
     h <- fromIntegral <$> Gtk.widgetGetHeight area
     wide <- fromIntegral <$> Gtk.widgetGetWidth win
     tall <- fromIntegral <$> Gtk.widgetGetHeight win
-    let (vertical, horizontal) = cornerEdges (cfgCorner cfg)
     pure
         ( mx + (if horizontal == LS.EdgeLeft then x else wide - x - w)
         , my + (if vertical == LS.EdgeTop then y else tall - y - h)
