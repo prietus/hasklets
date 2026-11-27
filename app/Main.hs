@@ -364,6 +364,7 @@ addWidget :: Shared -> Config -> Desk -> Host -> IORef [ThreadId] -> Gtk.Box -> 
 addWidget sh cfg desk host threads box kind = case kind of
     WeatherW -> weatherCard (weatherSize gap) (renderWeather th gap (cfgPlace cfg))
     ForecastW -> weatherCard forecastSize (renderForecast th (cfgPlace cfg))
+    WeatherFullW -> weatherCard (fullSize gap) (renderFull th gap (cfgPlace cfg))
     SystemW -> do
         area <- canvas box (cardSize, cardSize) (renderSystem th <$> readIORef (shSystem sh))
         writeIORef (shSystemRedraw sh) (Gtk.widgetQueueDraw area)
@@ -487,7 +488,9 @@ addWidget sh cfg desk host threads box kind = case kind of
                     void (GLib.timeoutAdd GLib.PRIORITY_DEFAULT (if wet then 40 else 5000) (False <$ tick))
         when (cfgRain cfg) tick
         running <- atomicModifyIORef' (shWeatherRunning sh) (True,)
-        unless running . background . weatherLoop source place $ \w -> do
+        -- The detail is only fetched when the card that shows it is there.
+        let full = WeatherFullW `elem` (concat (cfgColumns cfg) <> map fst (cfgPositions cfg))
+        unless running . background . weatherLoop full source place $ \w -> do
             writeIORef (shWeather sh) (Just w)
             join (readIORef (shWeatherRedraw sh))
 

@@ -30,7 +30,7 @@ import Mpd (Server (..))
 import Theme
 import Weather (Place (..), Source (..))
 
-data WidgetKind = WeatherW | ForecastW | SystemW | MprisW | DisksW | ProcessesW | CalendarW | JournalW | LunaW | MpdW | MopidyW
+data WidgetKind = WeatherW | ForecastW | WeatherFullW | SystemW | MprisW | DisksW | ProcessesW | CalendarW | JournalW | LunaW | MpdW | MopidyW
     deriving (Eq, Enum, Bounded)
 
 -- | Name in the JSON file.
@@ -38,6 +38,7 @@ widgetId :: WidgetKind -> Text
 widgetId k = case k of
     WeatherW -> "weather"
     ForecastW -> "forecast"
+    WeatherFullW -> "weather-full"
     SystemW -> "system"
     MprisW -> "mpris"
     DisksW -> "disks"
@@ -53,6 +54,7 @@ widgetLabel :: WidgetKind -> Text
 widgetLabel k = case k of
     WeatherW -> "Weather, compact"
     ForecastW -> "Weather, with forecast"
+    WeatherFullW -> "Weather, full"
     SystemW -> "CPU, memory and network"
     MprisW -> "Media player"
     DisksW -> "Disks"

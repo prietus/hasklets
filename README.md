@@ -17,6 +17,11 @@ compositor with wlr-layer-shell; made to go with
   wtr server (Apple's WeatherKit)
 * **Weather, with forecast** (`forecast`, hidden by default): the same, plus
   the week ahead and the temperature of the next 24 hours as a curve
+* **Weather, full** (`weather-full`, hidden by default): a taller card with
+  the weather now, the curve of the next 24 hours, ten days ahead with their
+  chance of rain and their range of temperatures, and tiles for what it feels
+  like, humidity, wind, rain, UV, pressure, visibility, clouds, sun and moon;
+  the days beyond the week and the tiles need a wtr server (its `detail` view)
 * **CPU, memory and network**: two ring gauges and a minute of upload and
   download history, read from `/proc`
 * **Media player**: cover art, title, artist, progress and previous /
@@ -94,7 +99,7 @@ configuration is kept.
 | `opacity` | the theme's | how opaque the cards are, 0 to 1 (the themes use about 0.92). Lower it, to `0.6` say, for glass cards on a compositor that blurs what is behind them, like [river-fx](https://github.com/prietus/river-fx) |
 | `margin` | `24` | distance from the screen edges, in logical pixels |
 | `gap` | `14` | space between widgets |
-| `columns` | see above | columns from left to right, each a list of `weather`, `forecast`, `system`, `mpris`, `disks`, `processes`, `calendar`, `journal`, `luna`, `mpd`, `mopidy`; a widget that is not listed is hidden |
+| `columns` | see above | columns from left to right, each a list of `weather`, `forecast`, `weather-full`, `system`, `mpris`, `disks`, `processes`, `calendar`, `journal`, `luna`, `mpd`, `mopidy`; a widget that is not listed is hidden |
 | `positions` | `{}` | widgets dragged out of their column, as `{"disks": [640, 300]}`: the distance from the two edges of the corner, in logical pixels |
 | `weather.name` | `"Madrid"` | title of the weather widget |
 | `weather.latitude`, `weather.longitude` | `40.42`, `-3.70` | forecast location; sent to the weather provider |
